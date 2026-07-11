@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function userRole() {
+      return isSignedIn() ? userDoc().rol : null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userRole() == 'admin';
+    }
+
+    function isSupervisor() {
+      return isSignedIn() && userRole() == 'supervisor';
+    }
+
+    function isEncargado() {
+      return isSignedIn() && userRole() == 'encargado';
+    }
+
+    function isAdminOrSupervisor() {
+      return isAdmin() || isSupervisor();
+    }
+
+    function depositosAsignados() {
+      return userDoc().depositosAsignados;
+    }
+
+    function esUsuarioActivo() {
+      return isSignedIn() && userDoc().activo == true;
+    }
+
+    // ---------- USUARIOS ----------
+    // Cada usuario puede leer su propio doc (para saber su rol); Admin/Supervisor leen todos.
+    // Solo Admin puede crear/editar/eliminar usuarios y asignar roles.
+    match /usuarios/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdminOrSupervisor());
+      allow write: if isAdmin();
+    }
+
+    // ---------- DEPOSITOS ----------
+    match /depositos/{depositoId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- CATEGORIAS ----------
+    match /categorias/{categoriaId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- INSUMOS ----------
+    match /insumos/{insumoId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- STOCK (cantidad actual por insumo + depósito) ----------
+    // Se actualiza vía transacción al registrar un movimiento.
+    match /stock/{stockId} {
+      allow read: if isSignedIn();
+      allow write: if esUsuarioActivo() && (
+        isAdminOrSupervisor() ||
+        (isEncargado() && request.resource.data.depositoId in depositosAsignados())
+      );
+    }
+
+    // ---------- MOVIMIENTOS (historial, nunca se edita ni se borra) ----------
+    match /movimientos/{movimientoId} {
+      allow read: if isSignedIn();
+      allow create: if esUsuarioActivo() && (
+        isAdminOrSupervisor() ||
+        (isEncargado() && request.resource.data.depositoId in depositosAsignados())
+      );
+      // Un movimiento jamás se modifica ni se borra: los errores se corrigen con un
+      // contramovimiento nuevo (tipo 'ajuste') que solo el Admin puede crear.
+      allow update, delete: if false;
+    }
+  }
+}
