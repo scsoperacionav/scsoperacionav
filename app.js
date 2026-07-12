@@ -24,14 +24,20 @@ function claseNivelStock(cantidad, minimo) {
   return '';
 }
 
+// Formatea montos en guaraníes: sin decimales, con puntos de miles (Gs. x.xxx.xxx).
+function formatGs(numero) {
+  const redondeado = Math.round(Number(numero) || 0);
+  return `Gs. ${redondeado.toLocaleString('es-PY')}`;
+}
+
 // ---------------------------------------------------------------------------
 // Componentes genéricos
 // ---------------------------------------------------------------------------
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal">
+      <div className={`modal ${wide ? 'modal-wide' : ''}`}>
         <h2>{title}</h2>
         {children}
       </div>
@@ -820,11 +826,10 @@ async function anularMovimiento(movimiento, insumos, depositos, usuario) {
   });
 }
 
-function RegistrarMovimientoForm({ usuario, insumos, depositos, sectores, onClose }) {
+function RegistrarEntradaForm({ usuario, insumos, depositos, onClose }) {
   const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
   const [form, setForm] = useState({
-    insumoId: '', depositoId: depositosOperables[0]?.id || '', tipo: 'entrada',
-    cantidad: '', motivo: '', precioUnitario: '', sectorId: '',
+    insumoId: '', depositoId: depositosOperables[0]?.id || '', cantidad: '', motivo: '', precioUnitario: '',
   });
   const [error, setError] = useState('');
   const [guardando, setGuardando] = useState(false);
@@ -835,41 +840,28 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, sectores, onClos
     const insumo = insumos.find((i) => i.id === form.insumoId);
     const deposito = depositos.find((d) => d.id === form.depositoId);
     const cantidad = Number(form.cantidad);
-    const sector = sectores.find((s) => s.id === form.sectorId);
 
     if (!insumo || !deposito || !cantidad || cantidad <= 0) {
       setError('Completá insumo, depósito y una cantidad mayor a cero.');
       return;
     }
-    if (form.tipo === 'salida' && !sector) {
-      setError('El sector es obligatorio para registrar una salida.');
-      return;
-    }
     setGuardando(true);
     try {
       await registrarMovimiento({
-        insumo, deposito, tipo: form.tipo, cantidad, motivo: form.motivo, usuario,
+        insumo, deposito, tipo: 'entrada', cantidad, motivo: form.motivo, usuario,
         precioUnitario: form.precioUnitario ? Number(form.precioUnitario) : null,
-        sector: form.tipo === 'salida' ? sector : null,
       });
       onClose();
     } catch (err) {
-      setError(err.message || 'No se pudo registrar el movimiento.');
+      setError(err.message || 'No se pudo registrar la entrada.');
     } finally {
       setGuardando(false);
     }
   }
 
   return (
-    <Modal title="Registrar movimiento" onClose={onClose}>
+    <Modal title="Registrar entrada" onClose={onClose}>
       <form onSubmit={guardar}>
-        <div className="field">
-          <label>Tipo</label>
-          <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-            <option value="entrada">Entrada (ingreso de stock)</option>
-            <option value="salida">Salida (consumo de stock)</option>
-          </select>
-        </div>
         <div className="field">
           <label>Depósito</label>
           <select required value={form.depositoId} onChange={(e) => setForm({ ...form, depositoId: e.target.value })}>
@@ -888,28 +880,14 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, sectores, onClos
           <label>Cantidad</label>
           <input type="number" min="0.01" step="0.01" required value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
         </div>
-
-        {form.tipo === 'entrada' && (
-          <div className="field">
-            <label>Precio unitario (opcional)</label>
-            <input type="number" min="0" step="0.01" value={form.precioUnitario} onChange={(e) => setForm({ ...form, precioUnitario: e.target.value })} />
-            <div className="hint">Si lo cargás, actualiza el costo promedio del insumo en este depósito.</div>
-          </div>
-        )}
-
-        {form.tipo === 'salida' && (
-          <div className="field">
-            <label>Sector que consume el insumo</label>
-            <select required value={form.sectorId} onChange={(e) => setForm({ ...form, sectorId: e.target.value })}>
-              <option value="">Seleccioná un sector</option>
-              {sectores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-            </select>
-          </div>
-        )}
-
+        <div className="field">
+          <label>Precio unitario (opcional)</label>
+          <input type="number" min="0" step="1" value={form.precioUnitario} onChange={(e) => setForm({ ...form, precioUnitario: e.target.value })} />
+          <div className="hint">Si lo cargás, actualiza el costo promedio del insumo en este depósito. Para compras con factura, usá la pantalla "Compras".</div>
+        </div>
         <div className="field">
           <label>Motivo / referencia (opcional)</label>
-          <input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} placeholder="Ej: OC 1234, consumo obra X" />
+          <input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} placeholder="Ej: donación, devolución, ajuste inicial" />
         </div>
         {error && <div className="error-text">{error}</div>}
         <div className="modal-actions">
@@ -921,8 +899,184 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, sectores, onClos
   );
 }
 
+// Salida múltiple: una sola operación (un depósito, un sector) puede sacar varios
+// insumos distintos a la vez, con el mismo formato tabla que Compras. Sin precio:
+// el gasto se calcula solo con el costo promedio ya guardado en el stock.
+function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose }) {
+  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
+  const [cabecera, setCabecera] = useState({
+    depositoId: depositosOperables[0]?.id || '', sectorId: '',
+    fecha: new Date().toISOString().slice(0, 10), motivo: '',
+  });
+  const [lineas, setLineas] = useState([{ key: Math.random().toString(36).slice(2), insumoTexto: '', cantidad: '' }]);
+  const [error, setError] = useState('');
+  const [guardando, setGuardando] = useState(false);
+
+  function actualizarLinea(key, campo, valor) {
+    setLineas((ls) => ls.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
+  }
+
+  function agregarLinea() {
+    setLineas((ls) => [...ls, { key: Math.random().toString(36).slice(2), insumoTexto: '', cantidad: '' }]);
+  }
+
+  function quitarLinea(key) {
+    setLineas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
+  }
+
+  function insumoPorNombre(texto) {
+    const t = texto.trim().toLowerCase();
+    return insumos.find((i) => i.nombre.trim().toLowerCase() === t);
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    setError('');
+
+    const deposito = depositos.find((d) => d.id === cabecera.depositoId);
+    const sector = sectores.find((s) => s.id === cabecera.sectorId);
+
+    if (!deposito || !sector) {
+      setError('Completá el depósito y el sector.');
+      return;
+    }
+
+    const lineasConTexto = lineas.filter((l) => l.insumoTexto.trim() && Number(l.cantidad) > 0);
+    if (lineasConTexto.length === 0) {
+      setError('Agregá al menos una línea con insumo y cantidad.');
+      return;
+    }
+
+    // A diferencia de Compras, en una salida el insumo TIENE que existir en el
+    // catálogo (no se puede sacar stock de algo que nunca entró).
+    const lineasSinMatch = lineasConTexto.filter((l) => !insumoPorNombre(l.insumoTexto));
+    if (lineasSinMatch.length > 0) {
+      setError(`No encontramos "${lineasSinMatch[0].insumoTexto}" en el catálogo de insumos. Elegí una opción de la lista.`);
+      return;
+    }
+
+    setGuardando(true);
+    try {
+      const salidaRef = db.collection('salidas').doc();
+      const detalleGuardado = [];
+
+      for (const linea of lineasConTexto) {
+        const insumo = insumoPorNombre(linea.insumoTexto);
+        const cantidad = Number(linea.cantidad);
+
+        await registrarMovimiento({
+          insumo, deposito, tipo: 'salida', cantidad,
+          motivo: cabecera.motivo, usuario, sector,
+        });
+
+        detalleGuardado.push({ insumoId: insumo.id, insumoNombre: insumo.nombre, cantidad });
+      }
+
+      await salidaRef.set({
+        depositoId: deposito.id, depositoNombre: deposito.nombre,
+        sectorId: sector.id, sectorNombre: sector.nombre,
+        fecha: cabecera.fecha, motivo: cabecera.motivo,
+        detalle: detalleGuardado,
+        usuarioId: usuario.uid, usuarioNombre: usuario.nombre || usuario.email,
+        fechaRegistro: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo registrar la salida.');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title="Registrar salida" onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Depósito</label>
+            <select required value={cabecera.depositoId} onChange={(e) => setCabecera({ ...cabecera, depositoId: e.target.value })}>
+              <option value="">Seleccioná un depósito</option>
+              {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Sector que retira</label>
+            <select required value={cabecera.sectorId} onChange={(e) => setCabecera({ ...cabecera, sectorId: e.target.value })}>
+              <option value="">Seleccioná un sector</option>
+              {sectores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Fecha</label>
+            <input type="date" required value={cabecera.fecha} onChange={(e) => setCabecera({ ...cabecera, fecha: e.target.value })} />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Motivo / referencia (opcional)</label>
+            <input value={cabecera.motivo} onChange={(e) => setCabecera({ ...cabecera, motivo: e.target.value })} placeholder="Ej: reposición semanal" />
+          </div>
+        </div>
+
+        <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Detalle de insumos</label>
+
+        <datalist id="lista-insumos-catalogo-salida">
+          {insumos.map((i) => <option key={i.id} value={i.nombre} />)}
+        </datalist>
+
+        <table className="detalle-table">
+          <thead>
+            <tr>
+              <th className="col-item">Ítem</th>
+              <th>Descripción</th>
+              <th className="col-cantidad">Cantidad</th>
+              <th className="col-quitar"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineas.map((l, idx) => {
+              const existe = !!insumoPorNombre(l.insumoTexto);
+              return (
+                <tr key={l.key}>
+                  <td className="col-item">{idx + 1}</td>
+                  <td>
+                    <input
+                      list="lista-insumos-catalogo-salida"
+                      placeholder="Escribí para buscar un insumo del catálogo"
+                      value={l.insumoTexto}
+                      onChange={(e) => actualizarLinea(l.key, 'insumoTexto', e.target.value)}
+                    />
+                    {l.insumoTexto.trim() && !existe && (
+                      <div className="hint" style={{ color: 'var(--danger)' }}>No existe en el catálogo.</div>
+                    )}
+                  </td>
+                  <td className="col-cantidad">
+                    <input type="number" min="0.01" step="0.01" value={l.cantidad} onChange={(e) => actualizarLinea(l.key, 'cantidad', e.target.value)} />
+                  </td>
+                  <td className="col-quitar">
+                    <button type="button" className="btn btn-danger" style={{ padding: '5px 8px', fontSize: 12 }} onClick={() => quitarLinea(l.key)}>×</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <button type="button" className="btn btn-outline" style={{ marginBottom: 14 }} onClick={agregarLinea}>+ Agregar línea</button>
+
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Registrar salida'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function MovimientosView({ usuario, insumos, depositos, sectores }) {
-  const [modalNuevo, setModalNuevo] = useState(false);
+  const [modalEntrada, setModalEntrada] = useState(false);
+  const [modalSalida, setModalSalida] = useState(false);
   const [movimientos, setMovimientos] = useState([]);
   const [filtroDeposito, setFiltroDeposito] = useState('');
   const [filtroInsumo, setFiltroInsumo] = useState('');
@@ -958,7 +1112,12 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
           <h1>Entradas / Salidas</h1>
           <p>Historial de movimientos de stock.</p>
         </div>
-        {puedeRegistrar && <button className="btn btn-accent" onClick={() => setModalNuevo(true)}>+ Registrar movimiento</button>}
+        {puedeRegistrar && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={() => setModalEntrada(true)}>+ Entrada</button>
+            <button className="btn btn-accent" onClick={() => setModalSalida(true)}>+ Salida</button>
+          </div>
+        )}
       </div>
 
       <div className="filters-row">
@@ -989,7 +1148,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
                   <td>{m.depositoNombre}</td>
                   <td className="qty">{m.cantidad}</td>
                   <td>{m.sectorNombre || '-'}</td>
-                  <td className="qty">{m.gasto != null ? `Gs. ${m.gasto.toLocaleString('es-PY')}` : '-'}</td>
+                  <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
                   <td>{m.usuarioNombre}</td>
                   <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
                   {puedeAnular && (
@@ -1006,13 +1165,21 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
         )}
       </div>
 
-      {modalNuevo && (
-        <RegistrarMovimientoForm
+      {modalEntrada && (
+        <RegistrarEntradaForm
+          usuario={usuario}
+          insumos={insumos}
+          depositos={depositos.filter((d) => puedeOperarDeposito(usuario, d.id))}
+          onClose={() => setModalEntrada(false)}
+        />
+      )}
+      {modalSalida && (
+        <RegistrarSalidaForm
           usuario={usuario}
           insumos={insumos}
           depositos={depositos.filter((d) => puedeOperarDeposito(usuario, d.id))}
           sectores={sectores}
-          onClose={() => setModalNuevo(false)}
+          onClose={() => setModalSalida(false)}
         />
       )}
     </div>
@@ -1023,17 +1190,15 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
 // Compras (factura de compra: cabecera + detalle -> genera entradas de stock)
 // ---------------------------------------------------------------------------
 
-function nuevaLineaDetalle() {
-  return { key: Math.random().toString(36).slice(2), insumoId: '', insumoNombreLibre: '', cantidad: '', precioUnitario: '' };
-}
-
 function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, onClose }) {
   const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
   const [cabecera, setCabecera] = useState({
     proveedorId: '', numeroFactura: '', timbrado: '', fecha: new Date().toISOString().slice(0, 10),
     depositoId: depositosOperables[0]?.id || '',
   });
-  const [lineas, setLineas] = useState([nuevaLineaDetalle()]);
+  // Cada línea guarda lo que el usuario escribió (insumoTexto) y, si coincide con
+  // un insumo existente, insumoId ya resuelto para no tener que buscarlo de nuevo.
+  const [lineas, setLineas] = useState([{ key: Math.random().toString(36).slice(2), insumoTexto: '', cantidad: '', precioUnitario: '' }]);
   const [error, setError] = useState('');
   const [guardando, setGuardando] = useState(false);
 
@@ -1042,11 +1207,16 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
   }
 
   function agregarLinea() {
-    setLineas((ls) => [...ls, nuevaLineaDetalle()]);
+    setLineas((ls) => [...ls, { key: Math.random().toString(36).slice(2), insumoTexto: '', cantidad: '', precioUnitario: '' }]);
   }
 
   function quitarLinea(key) {
     setLineas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
+  }
+
+  function insumoPorNombre(texto) {
+    const t = texto.trim().toLowerCase();
+    return insumos.find((i) => i.nombre.trim().toLowerCase() === t);
   }
 
   const total = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0);
@@ -1063,7 +1233,7 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
       return;
     }
 
-    const lineasValidas = lineas.filter((l) => (l.insumoId || l.insumoNombreLibre.trim()) && Number(l.cantidad) > 0 && Number(l.precioUnitario) >= 0);
+    const lineasValidas = lineas.filter((l) => l.insumoTexto.trim() && Number(l.cantidad) > 0 && Number(l.precioUnitario) >= 0);
     if (lineasValidas.length === 0) {
       setError('Agregá al menos una línea de detalle válida (insumo, cantidad y precio).');
       return;
@@ -1075,15 +1245,15 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
       const detalleGuardado = [];
 
       for (const linea of lineasValidas) {
-        let insumo = insumos.find((i) => i.id === linea.insumoId);
+        let insumo = insumoPorNombre(linea.insumoTexto);
 
-        // Si el insumo no existe en el catálogo, se crea automáticamente.
+        // Si el nombre escrito no coincide con ningún insumo del catálogo, se crea uno nuevo.
         if (!insumo) {
           const nuevoRef = await db.collection('insumos').add({
-            nombre: linea.insumoNombreLibre.trim(),
+            nombre: linea.insumoTexto.trim(),
             categoriaId: '', subcategoria: '', unidadMedida: 'unidad', stockMinimo: 0, proveedor: proveedor.nombre, activo: true,
           });
-          insumo = { id: nuevoRef.id, nombre: linea.insumoNombreLibre.trim() };
+          insumo = { id: nuevoRef.id, nombre: linea.insumoTexto.trim() };
         }
 
         const cantidad = Number(linea.cantidad);
@@ -1120,21 +1290,23 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
   }
 
   return (
-    <Modal title="Registrar factura de compra" onClose={onClose}>
+    <Modal title="Registrar factura de compra" onClose={onClose} wide>
       <form onSubmit={guardar}>
-        <div className="field">
-          <label>Proveedor</label>
-          <select required value={cabecera.proveedorId} onChange={(e) => setCabecera({ ...cabecera, proveedorId: e.target.value })}>
-            <option value="">Seleccioná un proveedor</option>
-            {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Depósito destino</label>
-          <select required value={cabecera.depositoId} onChange={(e) => setCabecera({ ...cabecera, depositoId: e.target.value })}>
-            <option value="">Seleccioná un depósito</option>
-            {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-          </select>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Proveedor</label>
+            <select required value={cabecera.proveedorId} onChange={(e) => setCabecera({ ...cabecera, proveedorId: e.target.value })}>
+              <option value="">Seleccioná un proveedor</option>
+              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Depósito destino</label>
+            <select required value={cabecera.depositoId} onChange={(e) => setCabecera({ ...cabecera, depositoId: e.target.value })}>
+              <option value="">Seleccioná un depósito</option>
+              {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+            </select>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <div className="field" style={{ flex: 1 }}>
@@ -1148,32 +1320,60 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
         </div>
 
         <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Detalle de insumos</label>
-        {lineas.map((l) => (
-          <div key={l.key} className="card" style={{ padding: 10, marginBottom: 8 }}>
-            <div className="field" style={{ marginBottom: 8 }}>
-              <select
-                value={l.insumoId}
-                onChange={(e) => actualizarLinea(l.key, 'insumoId', e.target.value)}
-                style={{ marginBottom: 6 }}
-              >
-                <option value="">-- Insumo nuevo (escribir abajo) --</option>
-                {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
-              </select>
-              {!l.insumoId && (
-                <input placeholder="Nombre del insumo nuevo" value={l.insumoNombreLibre} onChange={(e) => actualizarLinea(l.key, 'insumoNombreLibre', e.target.value)} />
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input type="number" min="0.01" step="0.01" placeholder="Cantidad" value={l.cantidad} onChange={(e) => actualizarLinea(l.key, 'cantidad', e.target.value)} />
-              <input type="number" min="0" step="0.01" placeholder="Precio unitario" value={l.precioUnitario} onChange={(e) => actualizarLinea(l.key, 'precioUnitario', e.target.value)} />
-              <button type="button" className="btn btn-danger" style={{ padding: '6px 10px', fontSize: 12 }} onClick={() => quitarLinea(l.key)}>×</button>
-            </div>
-          </div>
-        ))}
-        <button type="button" className="btn btn-outline" style={{ marginBottom: 14 }} onClick={agregarLinea}>+ Agregar línea</button>
 
-        <div className="card" style={{ padding: 10, marginBottom: 14, textAlign: 'right' }}>
-          <strong>Total: Gs. {total.toLocaleString('es-PY')}</strong>
+        <datalist id="lista-insumos-catalogo">
+          {insumos.map((i) => <option key={i.id} value={i.nombre} />)}
+        </datalist>
+
+        <table className="detalle-table">
+          <thead>
+            <tr>
+              <th className="col-item">Ítem</th>
+              <th>Descripción</th>
+              <th className="col-cantidad">Cantidad</th>
+              <th className="col-precio">Precio unitario</th>
+              <th className="col-subtotal">Subtotal</th>
+              <th className="col-quitar"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineas.map((l, idx) => {
+              const subtotal = (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0);
+              const existe = !!insumoPorNombre(l.insumoTexto);
+              return (
+                <tr key={l.key}>
+                  <td className="col-item">{idx + 1}</td>
+                  <td>
+                    <input
+                      list="lista-insumos-catalogo"
+                      placeholder="Escribí para buscar o crear un insumo"
+                      value={l.insumoTexto}
+                      onChange={(e) => actualizarLinea(l.key, 'insumoTexto', e.target.value)}
+                    />
+                    {l.insumoTexto.trim() && !existe && (
+                      <div className="hint">Insumo nuevo: se va a crear en el catálogo.</div>
+                    )}
+                  </td>
+                  <td className="col-cantidad">
+                    <input type="number" min="0.01" step="0.01" value={l.cantidad} onChange={(e) => actualizarLinea(l.key, 'cantidad', e.target.value)} />
+                  </td>
+                  <td className="col-precio">
+                    <input type="number" min="0" step="1" value={l.precioUnitario} onChange={(e) => actualizarLinea(l.key, 'precioUnitario', e.target.value)} />
+                  </td>
+                  <td className="col-subtotal">{formatGs(subtotal)}</td>
+                  <td className="col-quitar">
+                    <button type="button" className="btn btn-danger" style={{ padding: '5px 8px', fontSize: 12 }} onClick={() => quitarLinea(l.key)}>×</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <button type="button" className="btn btn-outline" style={{ marginBottom: 4 }} onClick={agregarLinea}>+ Agregar línea</button>
+
+        <div className="detalle-total-row">
+          <span>Total</span>
+          <span className="monto">{formatGs(total)}</span>
         </div>
 
         {error && <div className="error-text">{error}</div>}
@@ -1226,7 +1426,7 @@ function ComprasView({ usuario, insumos, depositos, proveedores }) {
                   <td>{f.numeroFactura}</td>
                   <td>{f.proveedorNombre}</td>
                   <td>{f.depositoNombre}</td>
-                  <td className="qty">Gs. {(f.total || 0).toLocaleString('es-PY')}</td>
+                  <td className="qty">{formatGs(f.total || 0)}</td>
                   <td>{f.usuarioNombre}</td>
                 </tr>
               ))}
@@ -1550,7 +1750,7 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
                   <tr key={idx}>
                     <td>{f.Fecha}</td><td>{f.Tipo}</td><td>{f.Insumo}</td><td>{f.Deposito}</td><td>{f.Sector || '-'}</td>
                     <td className="qty">{f.Cantidad}</td>
-                    <td className="qty">{f.Gasto !== '' ? `Gs. ${f.Gasto.toLocaleString('es-PY')}` : '-'}</td>
+                    <td className="qty">{f.Gasto !== '' ? formatGs(f.Gasto) : '-'}</td>
                     <td>{f.Usuario}</td><td>{f.Motivo || '-'}</td>
                   </tr>
                 ))}
@@ -1567,7 +1767,7 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
                   <tr key={idx}>
                     <td>{f.Sector}</td>
                     <td className="qty">{f.Movimientos}</td>
-                    <td className="qty">Gs. {f.GastoTotal.toLocaleString('es-PY')}</td>
+                    <td className="qty">{formatGs(f.GastoTotal)}</td>
                   </tr>
                 ))}
               </tbody>
