@@ -1297,11 +1297,16 @@ function ConfiguracionView({ configuracion }) {
   async function guardar() {
     setGuardando(true);
     setMensaje('');
-    await db.collection('configuracion').doc('empresa').set({
-      nombreEmpresa, logoBase64: logoPreview,
-    }, { merge: true });
-    setGuardando(false);
-    setMensaje('Guardado.');
+    try {
+      await db.collection('configuracion').doc('empresa').set({
+        nombreEmpresa, logoBase64: logoPreview,
+      }, { merge: true });
+      setMensaje('Guardado.');
+    } catch (err) {
+      setMensaje(`Error: ${err.message || 'no se pudo guardar. Revisá las reglas de Firestore.'}`);
+    } finally {
+      setGuardando(false);
+    }
   }
 
   return (
@@ -1328,7 +1333,7 @@ function ConfiguracionView({ configuracion }) {
             <img src={logoPreview} alt="Logo" style={{ maxWidth: 160, maxHeight: 80, border: '1px solid var(--border)', borderRadius: 6, padding: 6 }} />
           </div>
         )}
-        {mensaje && <div style={{ fontSize: 12.5, color: 'var(--success)', marginBottom: 10 }}>{mensaje}</div>}
+        {mensaje && <div style={{ fontSize: 12.5, color: mensaje.startsWith('Error') ? 'var(--danger)' : 'var(--success)', marginBottom: 10 }}>{mensaje}</div>}
         <button className="btn btn-primary" onClick={guardar} disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
       </div>
     </div>
