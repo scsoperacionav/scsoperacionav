@@ -1068,8 +1068,9 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
   const [modalSalida, setModalSalida] = useState(false);
   const [tab, setTab] = useState('movimientos');
   const [movimientos, setMovimientos] = useState([]);
-  const [filtroDeposito, setFiltroDeposito] = useState('');
-  const [filtroInsumo, setFiltroInsumo] = useState('');
+  const [filtros, setFiltros] = useState({
+    tipo: '', insumoId: '', depositoId: '', sectorId: '', usuario: '', motivo: '',
+  });
   const puedeRegistrar = tienePermiso(usuario.rol, 'registrarMovimiento');
   const puedeAnular = tienePermiso(usuario.rol, 'anularMovimiento');
 
@@ -1079,10 +1080,18 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
     return unsub;
   }, []);
 
+  function setFiltro(campo, valor) {
+    setFiltros((f) => ({ ...f, [campo]: valor }));
+  }
+
   const visibles = movimientos
     .filter((m) => puedeVerDeposito(usuario, m.depositoId))
-    .filter((m) => !filtroDeposito || m.depositoId === filtroDeposito)
-    .filter((m) => !filtroInsumo || m.insumoId === filtroInsumo);
+    .filter((m) => !filtros.tipo || m.tipo === filtros.tipo)
+    .filter((m) => !filtros.insumoId || m.insumoId === filtros.insumoId)
+    .filter((m) => !filtros.depositoId || m.depositoId === filtros.depositoId)
+    .filter((m) => !filtros.sectorId || m.sectorId === filtros.sectorId)
+    .filter((m) => !filtros.usuario || (m.usuarioNombre || '').toLowerCase().includes(filtros.usuario.toLowerCase()))
+    .filter((m) => !filtros.motivo || (m.motivo || '').toLowerCase().includes(filtros.motivo.toLowerCase()));
 
   const depositosVisiblesList = depositosVisibles(usuario, depositos);
 
@@ -1111,52 +1120,78 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
       </div>
 
       {tab === 'movimientos' && (
-        <React.Fragment>
-          <div className="filters-row">
-            <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
-              <option value="">Todos los depósitos</option>
-              {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-            </select>
-            <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
-              <option value="">Todos los insumos</option>
-              {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
-            </select>
-          </div>
-
-          <div className="table-wrap">
-            {visibles.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
-              <table>
-                <thead>
-                  <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
-                </thead>
-                <tbody>
-                  {visibles.map((m) => (
-                    <tr key={m.id}>
-                      <td>{formatFecha(m.fecha)}</td>
+        <div className="table-wrap">
+          {movimientos.length === 0 ? <EmptyState text="No hay movimientos todavía." /> : (
+            <table>
+              <thead>
+                <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
+                <tr className="filter-row">
+                  <th></th>
+                  <th>
+                    <select value={filtros.tipo} onChange={(e) => setFiltro('tipo', e.target.value)}>
+                      <option value="">Todos</option>
+                      <option value="entrada">Entrada</option>
+                      <option value="salida">Salida</option>
+                    </select>
+                  </th>
+                  <th>
+                    <select value={filtros.insumoId} onChange={(e) => setFiltro('insumoId', e.target.value)}>
+                      <option value="">Todos</option>
+                      {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+                    </select>
+                  </th>
+                  <th>
+                    <select value={filtros.depositoId} onChange={(e) => setFiltro('depositoId', e.target.value)}>
+                      <option value="">Todos</option>
+                      {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+                    </select>
+                  </th>
+                  <th></th>
+                  <th>
+                    <select value={filtros.sectorId} onChange={(e) => setFiltro('sectorId', e.target.value)}>
+                      <option value="">Todos</option>
+                      {sectores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                    </select>
+                  </th>
+                  <th></th>
+                  <th>
+                    <input placeholder="Buscar..." value={filtros.usuario} onChange={(e) => setFiltro('usuario', e.target.value)} />
+                  </th>
+                  <th>
+                    <input placeholder="Buscar..." value={filtros.motivo} onChange={(e) => setFiltro('motivo', e.target.value)} />
+                  </th>
+                  {puedeAnular && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {visibles.length === 0 ? (
+                  <tr><td colSpan={puedeAnular ? 10 : 9}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
+                ) : visibles.map((m) => (
+                  <tr key={m.id}>
+                    <td>{formatFecha(m.fecha)}</td>
+                    <td>
+                      <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
+                    </td>
+                    <td>{m.insumoNombre}</td>
+                    <td>{m.depositoNombre}</td>
+                    <td className="qty">{m.cantidad}</td>
+                    <td>{m.sectorNombre || '-'}</td>
+                    <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
+                    <td>{m.usuarioNombre}</td>
+                    <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
+                    {puedeAnular && (
                       <td>
-                        <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
+                        {!m.movimientoOriginalId && (
+                          <button className="btn btn-danger" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => handleAnular(m)}>Anular</button>
+                        )}
                       </td>
-                      <td>{m.insumoNombre}</td>
-                      <td>{m.depositoNombre}</td>
-                      <td className="qty">{m.cantidad}</td>
-                      <td>{m.sectorNombre || '-'}</td>
-                      <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
-                      <td>{m.usuarioNombre}</td>
-                      <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
-                      {puedeAnular && (
-                        <td>
-                          {!m.movimientoOriginalId && (
-                            <button className="btn btn-danger" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => handleAnular(m)}>Anular</button>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </React.Fragment>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {tab === 'salidas' && <SalidasRegistradasTabla usuario={usuario} depositos={depositos} />}

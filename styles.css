@@ -260,6 +260,23 @@ tbody td {
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: #FAFAFC; }
 
+/* Fila de filtros por columna, dentro del thead (estilo "filtro de Excel") */
+.filter-row th {
+  background: #fff;
+  padding: 4px 8px 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.filter-row select, .filter-row input {
+  width: 100%;
+  font-size: 12px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-weight: 400;
+  text-transform: none;
+  color: var(--text);
+}
+
 .qty { font-family: var(--font-mono); }
 
 /* ---------- Badges / status tags (elemento distintivo: etiqueta de depósito) ---------- */
