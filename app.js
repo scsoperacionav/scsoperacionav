@@ -1027,7 +1027,55 @@ function SalidaDetalleModal({ salida, onClose }) {
   );
 }
 
-function SalidasRegistradasTabla({ usuario, depositos }) {
+// Genera un comprobante imprimible de la salida, con el detalle de insumos y un
+// espacio de firma al pie mostrando el sector/solicitante cargado en "Motivo".
+function exportarSalidaPDF(salida, configuracion) {
+  const doc = new jspdf.jsPDF();
+  let y = 16;
+
+  if (configuracion.logoBase64) {
+    try { doc.addImage(configuracion.logoBase64, 'JPEG', 150, 8, 40, 20); } catch (e) { /* logo inválido, seguimos sin él */ }
+  }
+
+  doc.setFontSize(13);
+  doc.text(configuracion.nombreEmpresa || 'Comprobante de salida', 14, y);
+  y += 7;
+  doc.setFontSize(11);
+  doc.text('Comprobante de salida de stock', 14, y);
+  y += 8;
+
+  doc.setFontSize(9);
+  doc.text(`Fecha: ${salida.fecha}`, 14, y);
+  doc.text(`Depósito: ${salida.depositoNombre}`, 90, y);
+  y += 5;
+  doc.text(`Sector: ${salida.sectorNombre}`, 14, y);
+  doc.text(`Registrado por: ${salida.usuarioNombre}`, 90, y);
+  y += 5;
+  if (salida.motivo) {
+    doc.text(`Motivo / Solicitante: ${salida.motivo}`, 14, y);
+    y += 5;
+  }
+  y += 4;
+
+  doc.autoTable({
+    startY: y,
+    head: [['Insumo', 'Cantidad']],
+    body: (salida.detalle || []).map((d) => [d.insumoNombre, d.cantidad]),
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [16, 27, 51] },
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 26;
+  doc.setFontSize(10);
+  doc.line(14, finalY, 110, finalY);
+  doc.text('Firma de conformidad', 14, finalY + 5);
+  doc.setFontSize(9);
+  doc.text(salida.motivo || salida.sectorNombre, 14, finalY + 11);
+
+  doc.save(`Salida_${salida.fecha}_${salida.sectorNombre.replace(/ /g, '_')}.pdf`);
+}
+
+function SalidasRegistradasTabla({ usuario, depositos, configuracion }) {
   const [salidas, setSalidas] = useState([]);
   const [verSalida, setVerSalida] = useState(null);
 
@@ -1053,7 +1101,10 @@ function SalidasRegistradasTabla({ usuario, depositos }) {
                 <td className="qty">{(s.detalle || []).length}</td>
                 <td>{s.motivo || '-'}</td>
                 <td>{s.usuarioNombre}</td>
-                <td><button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerSalida(s)}>Ver</button></td>
+                <td style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerSalida(s)}>Ver</button>
+                  <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => exportarSalidaPDF(s, configuracion)}>PDF</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1064,7 +1115,7 @@ function SalidasRegistradasTabla({ usuario, depositos }) {
   );
 }
 
-function MovimientosView({ usuario, insumos, depositos, sectores }) {
+function MovimientosView({ usuario, insumos, depositos, sectores, configuracion }) {
   const [modalSalida, setModalSalida] = useState(false);
   const [tab, setTab] = useState('movimientos');
   const [movimientos, setMovimientos] = useState([]);
@@ -1194,7 +1245,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
         </div>
       )}
 
-      {tab === 'salidas' && <SalidasRegistradasTabla usuario={usuario} depositos={depositos} />}
+      {tab === 'salidas' && <SalidasRegistradasTabla usuario={usuario} depositos={depositos} configuracion={configuracion} />}
 
       {modalSalida && (
         <RegistrarSalidaForm
@@ -2078,7 +2129,7 @@ function AppShell({ authUser, configuracion }) {
 
   let contenido;
   if (vista === 'dashboard') contenido = <DashboardView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
-  else if (vista === 'movimientos') contenido = <MovimientosView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} />;
+  else if (vista === 'movimientos') contenido = <MovimientosView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} configuracion={configuracion} />;
   else if (vista === 'compras' && tienePermiso(usuario.rol, 'registrarCompra')) contenido = <ComprasView usuario={usuario} insumos={insumos} depositos={depositos} proveedores={proveedores} />;
   else if (vista === 'insumos') contenido = <InsumosView usuario={usuario} insumos={insumos} categorias={categorias} />;
   else if (vista === 'depositos') contenido = <DepositosView usuario={usuario} depositos={depositos} stock={stock} />;
