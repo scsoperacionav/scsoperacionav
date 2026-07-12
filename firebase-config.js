@@ -1,23 +1,10 @@
-// firebase-config.js
-// PASO OBLIGATORIO: reemplazá estos valores por los de TU proyecto de Firebase.
-// Los encontrás en: Firebase Console > Configuración del proyecto > Tus apps > SDK setup and configuration.
-
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.appspot.com",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID",
+  apiKey: "AIzaSyBRBfUUy8kAqolRFzZ4T7P6iJZxT2swid8",
+  authDomain: "scsoperacionav-b286e.firebaseapp.com",
+  projectId: "scsoperacionav-b286e",
+  storageBucket: "scsoperacionav-b286e.firebasestorage.app",
+  messagingSenderId: "1088454703925",
+  appId: "1:1088454703925:web:39d614e8164cbc681eaa7c",
+  measurementId: "G-RLZLV50T7H"
 };
-
-// App principal: la que usa toda la aplicación normalmente
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
-
-// App secundaria: se usa SOLO para crear usuarios nuevos desde la pantalla de Admin.
-// Truco necesario porque createUserWithEmailAndPassword() inicia sesión automáticamente
-// con el usuario recién creado - si usáramos la app principal, el Admin perdería su propia sesión.
-const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
-const secondaryAuth = secondaryApp.auth();
