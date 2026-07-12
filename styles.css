@@ -349,11 +349,15 @@ tbody tr:hover { background: #FAFAFC; }
 .detalle-table input, .detalle-table select {
   width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
 }
-.detalle-table .col-item { width: 34px; text-align: center; color: var(--text-muted); font-family: var(--font-mono); font-size: 12.5px; }
-.detalle-table .col-cantidad { width: 90px; }
-.detalle-table .col-precio { width: 110px; }
-.detalle-table .col-subtotal { width: 110px; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; padding-top: 9px; }
-.detalle-table .col-quitar { width: 30px; text-align: center; }
+/* Ancho/alineación: se aplican tanto al th como al td, para que las columnas alineen */
+.detalle-table th.col-item, .detalle-table td.col-item { width: 34px; text-align: center; }
+.detalle-table th.col-cantidad, .detalle-table td.col-cantidad { width: 90px; }
+.detalle-table th.col-precio, .detalle-table td.col-precio { width: 110px; }
+.detalle-table th.col-subtotal, .detalle-table td.col-subtotal { width: 110px; white-space: nowrap; }
+.detalle-table th.col-quitar, .detalle-table td.col-quitar { width: 30px; text-align: center; }
+/* Estilo de dato: SOLO en las celdas del cuerpo, nunca en el encabezado */
+.detalle-table td.col-item { color: var(--text-muted); font-family: var(--font-mono); font-size: 12.5px; padding-top: 9px; }
+.detalle-table td.col-subtotal { font-family: var(--font-mono); font-size: 13px; padding-top: 9px; }
 .detalle-total-row {
   display: flex; justify-content: flex-end; gap: 10px; align-items: baseline;
   padding: 10px 6px; border-top: 2px solid var(--border); margin-bottom: 14px; font-size: 14px;

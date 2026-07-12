@@ -108,7 +108,7 @@ function LoginScreen({ configuracion }) {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Panel general', permiso: null },
-  { id: 'movimientos', label: 'Entradas / Salidas', permiso: null },
+  { id: 'movimientos', label: 'Movimientos', permiso: null },
   { id: 'compras', label: 'Compras', permiso: 'registrarCompra' },
   { id: 'insumos', label: 'Insumos', permiso: null },
   { id: 'depositos', label: 'Depósitos', permiso: null },
@@ -826,79 +826,6 @@ async function anularMovimiento(movimiento, insumos, depositos, usuario) {
   });
 }
 
-function RegistrarEntradaForm({ usuario, insumos, depositos, onClose }) {
-  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
-  const [form, setForm] = useState({
-    insumoId: '', depositoId: depositosOperables[0]?.id || '', cantidad: '', motivo: '', precioUnitario: '',
-  });
-  const [error, setError] = useState('');
-  const [guardando, setGuardando] = useState(false);
-
-  async function guardar(e) {
-    e.preventDefault();
-    setError('');
-    const insumo = insumos.find((i) => i.id === form.insumoId);
-    const deposito = depositos.find((d) => d.id === form.depositoId);
-    const cantidad = Number(form.cantidad);
-
-    if (!insumo || !deposito || !cantidad || cantidad <= 0) {
-      setError('Completá insumo, depósito y una cantidad mayor a cero.');
-      return;
-    }
-    setGuardando(true);
-    try {
-      await registrarMovimiento({
-        insumo, deposito, tipo: 'entrada', cantidad, motivo: form.motivo, usuario,
-        precioUnitario: form.precioUnitario ? Number(form.precioUnitario) : null,
-      });
-      onClose();
-    } catch (err) {
-      setError(err.message || 'No se pudo registrar la entrada.');
-    } finally {
-      setGuardando(false);
-    }
-  }
-
-  return (
-    <Modal title="Registrar entrada" onClose={onClose}>
-      <form onSubmit={guardar}>
-        <div className="field">
-          <label>Depósito</label>
-          <select required value={form.depositoId} onChange={(e) => setForm({ ...form, depositoId: e.target.value })}>
-            <option value="">Seleccioná un depósito</option>
-            {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Insumo</label>
-          <select required value={form.insumoId} onChange={(e) => setForm({ ...form, insumoId: e.target.value })}>
-            <option value="">Seleccioná un insumo</option>
-            {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre} ({i.unidadMedida})</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Cantidad</label>
-          <input type="number" min="0.01" step="0.01" required value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
-        </div>
-        <div className="field">
-          <label>Precio unitario (opcional)</label>
-          <input type="number" min="0" step="1" value={form.precioUnitario} onChange={(e) => setForm({ ...form, precioUnitario: e.target.value })} />
-          <div className="hint">Si lo cargás, actualiza el costo promedio del insumo en este depósito. Para compras con factura, usá la pantalla "Compras".</div>
-        </div>
-        <div className="field">
-          <label>Motivo / referencia (opcional)</label>
-          <input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} placeholder="Ej: donación, devolución, ajuste inicial" />
-        </div>
-        {error && <div className="error-text">{error}</div>}
-        <div className="modal-actions">
-          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Registrar'}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 // Salida múltiple: una sola operación (un depósito, un sector) puede sacar varios
 // insumos distintos a la vez, con el mismo formato tabla que Compras. Sin precio:
 // el gasto se calcula solo con el costo promedio ya guardado en el stock.
@@ -1014,7 +941,7 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
             <input type="date" required value={cabecera.fecha} onChange={(e) => setCabecera({ ...cabecera, fecha: e.target.value })} />
           </div>
           <div className="field" style={{ flex: 1 }}>
-            <label>Motivo / referencia (opcional)</label>
+            <label>Motivo / Solicitante (opcional)</label>
             <input value={cabecera.motivo} onChange={(e) => setCabecera({ ...cabecera, motivo: e.target.value })} placeholder="Ej: reposición semanal" />
           </div>
         </div>
@@ -1074,9 +1001,72 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
   );
 }
 
+function SalidaDetalleModal({ salida, onClose }) {
+  return (
+    <Modal title={`Salida - ${salida.sectorNombre}`} onClose={onClose} wide>
+      <div className="filters-row" style={{ marginBottom: 6 }}>
+        <div><strong>Depósito:</strong> {salida.depositoNombre}</div>
+        <div><strong>Sector:</strong> {salida.sectorNombre}</div>
+        <div><strong>Fecha:</strong> {salida.fecha}</div>
+      </div>
+      {salida.motivo && <div style={{ marginBottom: 14, fontSize: 13.5 }}><strong>Motivo / Solicitante:</strong> {salida.motivo}</div>}
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Insumo</th><th>Cantidad</th></tr></thead>
+          <tbody>
+            {(salida.detalle || []).map((d, idx) => (
+              <tr key={idx}><td>{d.insumoNombre}</td><td className="qty">{d.cantidad}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-primary" onClick={onClose}>Cerrar</button>
+      </div>
+    </Modal>
+  );
+}
+
+function SalidasRegistradasTabla({ usuario, depositos }) {
+  const [salidas, setSalidas] = useState([]);
+  const [verSalida, setVerSalida] = useState(null);
+
+  useEffect(() => {
+    const unsub = db.collection('salidas').orderBy('fechaRegistro', 'desc').limit(100)
+      .onSnapshot((snap) => setSalidas(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  const visibles = salidas.filter((s) => puedeVerDeposito(usuario, s.depositoId));
+
+  return (
+    <div className="table-wrap">
+      {visibles.length === 0 ? <EmptyState text="No hay salidas registradas todavía." /> : (
+        <table>
+          <thead><tr><th>Fecha</th><th>Depósito</th><th>Sector</th><th>Ítems</th><th>Motivo</th><th>Registrado por</th><th></th></tr></thead>
+          <tbody>
+            {visibles.map((s) => (
+              <tr key={s.id}>
+                <td>{s.fecha}</td>
+                <td>{s.depositoNombre}</td>
+                <td>{s.sectorNombre}</td>
+                <td className="qty">{(s.detalle || []).length}</td>
+                <td>{s.motivo || '-'}</td>
+                <td>{s.usuarioNombre}</td>
+                <td><button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerSalida(s)}>Ver</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {verSalida && <SalidaDetalleModal salida={verSalida} onClose={() => setVerSalida(null)} />}
+    </div>
+  );
+}
+
 function MovimientosView({ usuario, insumos, depositos, sectores }) {
-  const [modalEntrada, setModalEntrada] = useState(false);
   const [modalSalida, setModalSalida] = useState(false);
+  const [tab, setTab] = useState('movimientos');
   const [movimientos, setMovimientos] = useState([]);
   const [filtroDeposito, setFiltroDeposito] = useState('');
   const [filtroInsumo, setFiltroInsumo] = useState('');
@@ -1109,70 +1099,68 @@ function MovimientosView({ usuario, insumos, depositos, sectores }) {
     <div>
       <div className="page-header">
         <div>
-          <h1>Entradas / Salidas</h1>
-          <p>Historial de movimientos de stock.</p>
+          <h1>Movimientos</h1>
+          <p>Historial de stock y registro de salidas. Las entradas se cargan desde "Compras".</p>
         </div>
-        {puedeRegistrar && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline" onClick={() => setModalEntrada(true)}>+ Entrada</button>
-            <button className="btn btn-accent" onClick={() => setModalSalida(true)}>+ Salida</button>
+        {puedeRegistrar && <button className="btn btn-accent" onClick={() => setModalSalida(true)}>+ Salida</button>}
+      </div>
+
+      <div className="tabs">
+        <div className={`tab ${tab === 'movimientos' ? 'active' : ''}`} onClick={() => setTab('movimientos')}>Movimientos (línea por línea)</div>
+        <div className={`tab ${tab === 'salidas' ? 'active' : ''}`} onClick={() => setTab('salidas')}>Salidas registradas</div>
+      </div>
+
+      {tab === 'movimientos' && (
+        <React.Fragment>
+          <div className="filters-row">
+            <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
+              <option value="">Todos los depósitos</option>
+              {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+            </select>
+            <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
+              <option value="">Todos los insumos</option>
+              {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+            </select>
           </div>
-        )}
-      </div>
 
-      <div className="filters-row">
-        <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
-          <option value="">Todos los depósitos</option>
-          {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-        </select>
-        <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
-          <option value="">Todos los insumos</option>
-          {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
-        </select>
-      </div>
-
-      <div className="table-wrap">
-        {visibles.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
-          <table>
-            <thead>
-              <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
-            </thead>
-            <tbody>
-              {visibles.map((m) => (
-                <tr key={m.id}>
-                  <td>{formatFecha(m.fecha)}</td>
-                  <td>
-                    <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
-                  </td>
-                  <td>{m.insumoNombre}</td>
-                  <td>{m.depositoNombre}</td>
-                  <td className="qty">{m.cantidad}</td>
-                  <td>{m.sectorNombre || '-'}</td>
-                  <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
-                  <td>{m.usuarioNombre}</td>
-                  <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
-                  {puedeAnular && (
-                    <td>
-                      {!m.movimientoOriginalId && (
-                        <button className="btn btn-danger" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => handleAnular(m)}>Anular</button>
+          <div className="table-wrap">
+            {visibles.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
+                </thead>
+                <tbody>
+                  {visibles.map((m) => (
+                    <tr key={m.id}>
+                      <td>{formatFecha(m.fecha)}</td>
+                      <td>
+                        <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
+                      </td>
+                      <td>{m.insumoNombre}</td>
+                      <td>{m.depositoNombre}</td>
+                      <td className="qty">{m.cantidad}</td>
+                      <td>{m.sectorNombre || '-'}</td>
+                      <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
+                      <td>{m.usuarioNombre}</td>
+                      <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
+                      {puedeAnular && (
+                        <td>
+                          {!m.movimientoOriginalId && (
+                            <button className="btn btn-danger" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => handleAnular(m)}>Anular</button>
+                          )}
+                        </td>
                       )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {modalEntrada && (
-        <RegistrarEntradaForm
-          usuario={usuario}
-          insumos={insumos}
-          depositos={depositos.filter((d) => puedeOperarDeposito(usuario, d.id))}
-          onClose={() => setModalEntrada(false)}
-        />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </React.Fragment>
       )}
+
+      {tab === 'salidas' && <SalidasRegistradasTabla usuario={usuario} depositos={depositos} />}
+
       {modalSalida && (
         <RegistrarSalidaForm
           usuario={usuario}
@@ -1386,8 +1374,44 @@ function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, 
   );
 }
 
+function FacturaCompraDetalleModal({ factura, onClose }) {
+  return (
+    <Modal title={`Factura ${factura.numeroFactura}`} onClose={onClose} wide>
+      <div className="filters-row" style={{ marginBottom: 6 }}>
+        <div><strong>Proveedor:</strong> {factura.proveedorNombre}</div>
+        <div><strong>Depósito:</strong> {factura.depositoNombre}</div>
+        <div><strong>Fecha:</strong> {factura.fecha}</div>
+      </div>
+      {factura.timbrado && <div style={{ marginBottom: 14, fontSize: 13.5 }}><strong>Timbrado:</strong> {factura.timbrado}</div>}
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Insumo</th><th>Cantidad</th><th>Precio unitario</th><th>Subtotal</th></tr></thead>
+          <tbody>
+            {(factura.detalle || []).map((d, idx) => (
+              <tr key={idx}>
+                <td>{d.insumoNombre}</td>
+                <td className="qty">{d.cantidad}</td>
+                <td className="qty">{formatGs(d.precioUnitario)}</td>
+                <td className="qty">{formatGs(d.subtotal)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="detalle-total-row">
+        <span>Total</span>
+        <span className="monto">{formatGs(factura.total || 0)}</span>
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-primary" onClick={onClose}>Cerrar</button>
+      </div>
+    </Modal>
+  );
+}
+
 function ComprasView({ usuario, insumos, depositos, proveedores }) {
   const [modal, setModal] = useState(false);
+  const [verFactura, setVerFactura] = useState(null);
   const [facturas, setFacturas] = useState([]);
   const puedeRegistrar = tienePermiso(usuario.rol, 'registrarCompra');
 
@@ -1418,7 +1442,7 @@ function ComprasView({ usuario, insumos, depositos, proveedores }) {
       <div className="table-wrap">
         {facturas.length === 0 ? <EmptyState text="No hay facturas de compra registradas todavía." /> : (
           <table>
-            <thead><tr><th>Fecha</th><th>N° Factura</th><th>Proveedor</th><th>Depósito</th><th>Total</th><th>Registrado por</th></tr></thead>
+            <thead><tr><th>Fecha</th><th>N° Factura</th><th>Proveedor</th><th>Depósito</th><th>Total</th><th>Registrado por</th><th></th></tr></thead>
             <tbody>
               {facturas.map((f) => (
                 <tr key={f.id}>
@@ -1428,12 +1452,14 @@ function ComprasView({ usuario, insumos, depositos, proveedores }) {
                   <td>{f.depositoNombre}</td>
                   <td className="qty">{formatGs(f.total || 0)}</td>
                   <td>{f.usuarioNombre}</td>
+                  <td><button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerFactura(f)}>Ver</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+      {verFactura && <FacturaCompraDetalleModal factura={verFactura} onClose={() => setVerFactura(null)} />}
 
       {modal && (
         <RegistrarFacturaCompraForm
