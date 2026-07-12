@@ -20,12 +20,17 @@ const ROLE_LABELS = {
 const PERMISSIONS = {
   gestionarInsumos: [ROLES.ADMIN, ROLES.SUPERVISOR],
   gestionarDepositos: [ROLES.ADMIN, ROLES.SUPERVISOR],
+  eliminarDepositos: [ROLES.ADMIN],
   gestionarCategorias: [ROLES.ADMIN, ROLES.SUPERVISOR],
   registrarMovimiento: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
   anularMovimiento: [ROLES.ADMIN],
   exportarReportes: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.CONSULTA],
   gestionarUsuarios: [ROLES.ADMIN],
   configurarMinimos: [ROLES.ADMIN, ROLES.SUPERVISOR],
+  gestionarProveedores: [ROLES.ADMIN, ROLES.SUPERVISOR],
+  gestionarSectores: [ROLES.ADMIN, ROLES.SUPERVISOR],
+  registrarCompra: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
+  gestionarConfiguracion: [ROLES.ADMIN],
 };
 
 function tienePermiso(rolUsuario, permiso) {

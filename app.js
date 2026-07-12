@@ -47,7 +47,7 @@ function EmptyState({ text }) {
 // Pantalla de Login
 // ---------------------------------------------------------------------------
 
-function LoginScreen() {
+function LoginScreen({ configuracion }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -69,7 +69,12 @@ function LoginScreen() {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <div className="mark">CONTROL DE STOCK</div>
+        {configuracion.logoBase64 ? (
+          <img src={configuracion.logoBase64} alt="Logo" style={{ maxHeight: 40, marginBottom: 8 }} />
+        ) : (
+          <div className="mark">CONTROL DE STOCK</div>
+        )}
+        {configuracion.nombreEmpresa && <div className="mark">{configuracion.nombreEmpresa.toUpperCase()}</div>}
         <h1>Iniciar sesión</h1>
         <p className="sub">Ingresá con el email y contraseña que te asignó el administrador.</p>
         <form onSubmit={handleSubmit}>
@@ -98,18 +103,26 @@ function LoginScreen() {
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Panel general', permiso: null },
   { id: 'movimientos', label: 'Entradas / Salidas', permiso: null },
+  { id: 'compras', label: 'Compras', permiso: 'registrarCompra' },
   { id: 'insumos', label: 'Insumos', permiso: null },
   { id: 'depositos', label: 'Depósitos', permiso: null },
+  { id: 'sectores', label: 'Sectores', permiso: null },
+  { id: 'proveedores', label: 'Proveedores', permiso: null },
   { id: 'reportes', label: 'Reportes', permiso: 'exportarReportes' },
   { id: 'usuarios', label: 'Usuarios', permiso: 'gestionarUsuarios' },
+  { id: 'configuracion', label: 'Configuración', permiso: 'gestionarConfiguracion' },
 ];
 
-function Sidebar({ vista, setVista, usuario }) {
+function Sidebar({ vista, setVista, usuario, configuracion }) {
   return (
     <div className="sidebar">
       <div className="sidebar-brand">
-        <span className="mark">#</span>
-        <span className="name">Stock Ops</span>
+        {configuracion.logoBase64 ? (
+          <img src={configuracion.logoBase64} alt="Logo" style={{ height: 26, width: 'auto', borderRadius: 4 }} />
+        ) : (
+          <span className="mark">#</span>
+        )}
+        <span className="name">{configuracion.nombreEmpresa || 'Stock Ops'}</span>
       </div>
       <nav>
         {NAV_ITEMS.filter((item) => !item.permiso || tienePermiso(usuario.rol, item.permiso)).map((item) => (
@@ -468,11 +481,20 @@ function DepositoForm({ deposito, onClose }) {
   );
 }
 
-function DepositosView({ usuario, depositos }) {
+function DepositosView({ usuario, depositos, stock }) {
   const [modal, setModal] = useState(null);
   const puedeEscribir = tienePermiso(usuario.rol, 'gestionarDepositos');
+  const puedeEliminar = tienePermiso(usuario.rol, 'eliminarDepositos');
+
+  function tieneStock(dep) {
+    return Object.values(stock).some((s) => s.depositoId === dep.id && s.cantidad > 0);
+  }
 
   async function eliminarDeposito(dep) {
+    if (tieneStock(dep)) {
+      alert(`No se puede eliminar "${dep.nombre}" porque todavía tiene stock cargado. Vaciá el stock (con salidas) antes de eliminarlo.`);
+      return;
+    }
     if (!confirm(`¿Eliminar el depósito "${dep.nombre}"? El historial de movimientos se conserva.`)) return;
     await db.collection('depositos').doc(dep.id).delete();
   }
@@ -490,16 +512,16 @@ function DepositosView({ usuario, depositos }) {
       <div className="table-wrap">
         {depositos.length === 0 ? <EmptyState text="No hay depósitos creados todavía." /> : (
           <table>
-            <thead><tr><th>Nombre</th><th>Dirección</th>{puedeEscribir && <th></th>}</tr></thead>
+            <thead><tr><th>Nombre</th><th>Dirección</th>{(puedeEscribir || puedeEliminar) && <th></th>}</tr></thead>
             <tbody>
               {depositos.map((d) => (
                 <tr key={d.id}>
                   <td>{d.nombre}</td>
                   <td>{d.direccion || '-'}</td>
-                  {puedeEscribir && (
+                  {(puedeEscribir || puedeEliminar) && (
                     <td style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(d)}>Editar</button>
-                      <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminarDeposito(d)}>Eliminar</button>
+                      {puedeEscribir && <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(d)}>Editar</button>}
+                      {puedeEliminar && <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminarDeposito(d)}>Eliminar</button>}
                     </td>
                   )}
                 </tr>
@@ -515,28 +537,242 @@ function DepositosView({ usuario, depositos }) {
 }
 
 // ---------------------------------------------------------------------------
+// Sectores (destino del gasto en cada salida: Cocina, Limpieza general, etc.)
+// ---------------------------------------------------------------------------
+
+function SectorForm({ sector, onClose }) {
+  const [form, setForm] = useState(sector || { nombre: '', activo: true });
+  const [guardando, setGuardando] = useState(false);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setGuardando(true);
+    if (sector) {
+      await db.collection('sectores').doc(sector.id).update(form);
+    } else {
+      await db.collection('sectores').add(form);
+    }
+    setGuardando(false);
+    onClose();
+  }
+
+  return (
+    <Modal title={sector ? 'Editar sector' : 'Nuevo sector'} onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Nombre</label>
+          <input required value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ej: Cocina, Recepción, Mantenimiento" />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function SectoresView({ sectores }) {
+  const [modal, setModal] = useState(null);
+
+  async function eliminar(s) {
+    if (!confirm(`¿Eliminar el sector "${s.nombre}"? El historial de gastos se conserva.`)) return;
+    await db.collection('sectores').doc(s.id).delete();
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Sectores</h1>
+          <p>Áreas que consumen insumos, usadas para reportar el gasto de cada salida.</p>
+        </div>
+        <button className="btn btn-accent" onClick={() => setModal('nuevo')}>+ Nuevo sector</button>
+      </div>
+
+      <div className="table-wrap">
+        {sectores.length === 0 ? <EmptyState text="No hay sectores creados todavía." /> : (
+          <table>
+            <thead><tr><th>Nombre</th><th></th></tr></thead>
+            <tbody>
+              {sectores.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.nombre}</td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(s)}>Editar</button>
+                    <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminar(s)}>Eliminar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modal && <SectorForm sector={modal === 'nuevo' ? null : modal} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Proveedores
+// ---------------------------------------------------------------------------
+
+function ProveedorForm({ proveedor, onClose }) {
+  const [form, setForm] = useState(proveedor || { nombre: '', ruc: '', telefono: '', email: '', direccion: '', activo: true });
+  const [guardando, setGuardando] = useState(false);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setGuardando(true);
+    if (proveedor) {
+      await db.collection('proveedores').doc(proveedor.id).update(form);
+    } else {
+      await db.collection('proveedores').add(form);
+    }
+    setGuardando(false);
+    onClose();
+  }
+
+  return (
+    <Modal title={proveedor ? 'Editar proveedor' : 'Nuevo proveedor'} onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Nombre / Razón social</label>
+          <input required value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>RUC (opcional)</label>
+          <input value={form.ruc} onChange={(e) => setForm({ ...form, ruc: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Teléfono (opcional)</label>
+          <input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Email (opcional)</label>
+          <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Dirección (opcional)</label>
+          <input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ProveedoresView({ proveedores }) {
+  const [modal, setModal] = useState(null);
+
+  async function eliminar(p) {
+    if (!confirm(`¿Eliminar el proveedor "${p.nombre}"? El historial de compras se conserva.`)) return;
+    await db.collection('proveedores').doc(p.id).delete();
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Proveedores</h1>
+          <p>Empresas a las que se les compran insumos.</p>
+        </div>
+        <button className="btn btn-accent" onClick={() => setModal('nuevo')}>+ Nuevo proveedor</button>
+      </div>
+
+      <div className="table-wrap">
+        {proveedores.length === 0 ? <EmptyState text="No hay proveedores cargados todavía." /> : (
+          <table>
+            <thead><tr><th>Nombre</th><th>RUC</th><th>Teléfono</th><th>Email</th><th></th></tr></thead>
+            <tbody>
+              {proveedores.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.nombre}</td>
+                  <td>{p.ruc || '-'}</td>
+                  <td>{p.telefono || '-'}</td>
+                  <td>{p.email || '-'}</td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(p)}>Editar</button>
+                    <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminar(p)}>Eliminar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modal && <ProveedorForm proveedor={modal === 'nuevo' ? null : modal} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Movimientos (entradas / salidas / ajustes) + transacción de stock
 // ---------------------------------------------------------------------------
 
 // Registra un movimiento y actualiza el documento de stock correspondiente
-// dentro de una transacción, para evitar condiciones de carrera si dos
-// personas cargan movimientos del mismo insumo al mismo tiempo.
-async function registrarMovimiento({ insumo, deposito, tipo, cantidad, motivo, usuario, movimientoOriginalId }) {
+// (cantidad + costo promedio ponderado) dentro de una transacción, para evitar
+// condiciones de carrera si dos personas cargan movimientos del mismo insumo
+// al mismo tiempo.
+//
+// Costo promedio ponderado: cuando entra stock CON precioUnitario (ej: desde
+// una factura de compra), se recalcula el costo promedio del insumo en ESE
+// depósito. Las salidas usan ese costo promedio para calcular el gasto real,
+// y no lo modifican. Los ajustes (anulaciones) tampoco lo modifican, para no
+// distorsionar el promedio con correcciones administrativas.
+async function registrarMovimiento({
+  insumo, deposito, tipo, cantidad, motivo, usuario,
+  precioUnitario, sector, esAjuste, movimientoOriginalId, proveedorId, facturaCompraId,
+}) {
+  if (tipo === 'salida' && !esAjuste && !sector) {
+    throw new Error('El sector es obligatorio para registrar una salida.');
+  }
+
   const stockId = stockDocId(insumo.id, deposito.id);
   const stockRef = db.collection('stock').doc(stockId);
   const movRef = db.collection('movimientos').doc();
 
   await db.runTransaction(async (tx) => {
     const stockSnap = await tx.get(stockRef);
-    const actual = stockSnap.exists ? stockSnap.data().cantidad : 0;
-    const delta = tipo === 'salida' ? -cantidad : cantidad;
-    const nuevaCantidad = actual + delta;
+    const stockData = stockSnap.exists ? stockSnap.data() : {};
+    const cantidadActual = stockData.cantidad || 0;
+    const costoPromedioActual = stockData.costoPromedio || 0;
 
-    if (nuevaCantidad < 0) {
-      throw new Error('La salida deja el stock en negativo. Revisá la cantidad.');
+    let nuevaCantidad;
+    let nuevoCostoPromedio = costoPromedioActual;
+    let costoUnitarioMovimiento = costoPromedioActual;
+    let gasto = null;
+
+    if (tipo === 'entrada') {
+      nuevaCantidad = cantidadActual + cantidad;
+      if (!esAjuste && precioUnitario > 0) {
+        // Recalcula el promedio ponderado incorporando la nueva entrada.
+        nuevoCostoPromedio = ((cantidadActual * costoPromedioActual) + (cantidad * precioUnitario)) / nuevaCantidad;
+        costoUnitarioMovimiento = precioUnitario;
+      }
+    } else {
+      // salida (incluye la salida generada al anular una entrada)
+      nuevaCantidad = cantidadActual - cantidad;
+      if (nuevaCantidad < 0) {
+        throw new Error('La salida deja el stock en negativo. Revisá la cantidad.');
+      }
+      costoUnitarioMovimiento = costoPromedioActual;
+      if (!esAjuste) {
+        gasto = Number((cantidad * costoPromedioActual).toFixed(2));
+      }
     }
 
-    tx.set(stockRef, { insumoId: insumo.id, depositoId: deposito.id, cantidad: nuevaCantidad }, { merge: true });
+    tx.set(stockRef, {
+      insumoId: insumo.id,
+      depositoId: deposito.id,
+      cantidad: nuevaCantidad,
+      costoPromedio: nuevoCostoPromedio,
+    }, { merge: true });
 
     tx.set(movRef, {
       insumoId: insumo.id,
@@ -545,22 +781,32 @@ async function registrarMovimiento({ insumo, deposito, tipo, cantidad, motivo, u
       depositoNombre: deposito.nombre,
       tipo,
       cantidad,
+      costoUnitario: Number(costoUnitarioMovimiento.toFixed(4)),
+      gasto,
+      sectorId: sector ? sector.id : null,
+      sectorNombre: sector ? sector.nombre : null,
       motivo: motivo || '',
       usuarioId: usuario.uid,
       usuarioNombre: usuario.nombre || usuario.email,
       fecha: firebase.firestore.FieldValue.serverTimestamp(),
       movimientoOriginalId: movimientoOriginalId || null,
+      proveedorId: proveedorId || null,
+      facturaCompraId: facturaCompraId || null,
     });
   });
 }
 
 // Anula un movimiento generando el contramovimiento inverso (nunca se borra el original).
+// Se marca esAjuste para que NO afecte el costo promedio ponderado del insumo.
 async function anularMovimiento(movimiento, insumos, depositos, usuario) {
   const insumo = insumos.find((i) => i.id === movimiento.insumoId);
   const deposito = depositos.find((d) => d.id === movimiento.depositoId);
   if (!insumo || !deposito) throw new Error('No se encontró el insumo o depósito original.');
 
   const tipoInverso = movimiento.tipo === 'entrada' ? 'salida' : 'entrada';
+  // Conservamos el sector original como referencia si lo tenía, solo a modo informativo
+  // (no es obligatorio: es un ajuste, no una salida real).
+  const sector = movimiento.sectorId ? { id: movimiento.sectorId, nombre: movimiento.sectorNombre } : null;
 
   await registrarMovimiento({
     insumo, deposito,
@@ -568,13 +814,18 @@ async function anularMovimiento(movimiento, insumos, depositos, usuario) {
     cantidad: movimiento.cantidad,
     motivo: `Anulación del movimiento ${movimiento.id}`,
     usuario,
+    esAjuste: true,
+    sector,
     movimientoOriginalId: movimiento.id,
   });
 }
 
-function RegistrarMovimientoForm({ usuario, insumos, depositos, onClose }) {
+function RegistrarMovimientoForm({ usuario, insumos, depositos, sectores, onClose }) {
   const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
-  const [form, setForm] = useState({ insumoId: '', depositoId: depositosOperables[0]?.id || '', tipo: 'entrada', cantidad: '', motivo: '' });
+  const [form, setForm] = useState({
+    insumoId: '', depositoId: depositosOperables[0]?.id || '', tipo: 'entrada',
+    cantidad: '', motivo: '', precioUnitario: '', sectorId: '',
+  });
   const [error, setError] = useState('');
   const [guardando, setGuardando] = useState(false);
 
@@ -584,14 +835,23 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, onClose }) {
     const insumo = insumos.find((i) => i.id === form.insumoId);
     const deposito = depositos.find((d) => d.id === form.depositoId);
     const cantidad = Number(form.cantidad);
+    const sector = sectores.find((s) => s.id === form.sectorId);
 
     if (!insumo || !deposito || !cantidad || cantidad <= 0) {
       setError('Completá insumo, depósito y una cantidad mayor a cero.');
       return;
     }
+    if (form.tipo === 'salida' && !sector) {
+      setError('El sector es obligatorio para registrar una salida.');
+      return;
+    }
     setGuardando(true);
     try {
-      await registrarMovimiento({ insumo, deposito, tipo: form.tipo, cantidad, motivo: form.motivo, usuario });
+      await registrarMovimiento({
+        insumo, deposito, tipo: form.tipo, cantidad, motivo: form.motivo, usuario,
+        precioUnitario: form.precioUnitario ? Number(form.precioUnitario) : null,
+        sector: form.tipo === 'salida' ? sector : null,
+      });
       onClose();
     } catch (err) {
       setError(err.message || 'No se pudo registrar el movimiento.');
@@ -628,6 +888,25 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, onClose }) {
           <label>Cantidad</label>
           <input type="number" min="0.01" step="0.01" required value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
         </div>
+
+        {form.tipo === 'entrada' && (
+          <div className="field">
+            <label>Precio unitario (opcional)</label>
+            <input type="number" min="0" step="0.01" value={form.precioUnitario} onChange={(e) => setForm({ ...form, precioUnitario: e.target.value })} />
+            <div className="hint">Si lo cargás, actualiza el costo promedio del insumo en este depósito.</div>
+          </div>
+        )}
+
+        {form.tipo === 'salida' && (
+          <div className="field">
+            <label>Sector que consume el insumo</label>
+            <select required value={form.sectorId} onChange={(e) => setForm({ ...form, sectorId: e.target.value })}>
+              <option value="">Seleccioná un sector</option>
+              {sectores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </select>
+          </div>
+        )}
+
         <div className="field">
           <label>Motivo / referencia (opcional)</label>
           <input value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} placeholder="Ej: OC 1234, consumo obra X" />
@@ -642,7 +921,7 @@ function RegistrarMovimientoForm({ usuario, insumos, depositos, onClose }) {
   );
 }
 
-function MovimientosView({ usuario, insumos, depositos }) {
+function MovimientosView({ usuario, insumos, depositos, sectores }) {
   const [modalNuevo, setModalNuevo] = useState(false);
   const [movimientos, setMovimientos] = useState([]);
   const [filtroDeposito, setFiltroDeposito] = useState('');
@@ -697,7 +976,7 @@ function MovimientosView({ usuario, insumos, depositos }) {
         {visibles.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
           <table>
             <thead>
-              <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
+              <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
             </thead>
             <tbody>
               {visibles.map((m) => (
@@ -709,6 +988,8 @@ function MovimientosView({ usuario, insumos, depositos }) {
                   <td>{m.insumoNombre}</td>
                   <td>{m.depositoNombre}</td>
                   <td className="qty">{m.cantidad}</td>
+                  <td>{m.sectorNombre || '-'}</td>
+                  <td className="qty">{m.gasto != null ? `Gs. ${m.gasto.toLocaleString('es-PY')}` : '-'}</td>
                   <td>{m.usuarioNombre}</td>
                   <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
                   {puedeAnular && (
@@ -730,6 +1011,7 @@ function MovimientosView({ usuario, insumos, depositos }) {
           usuario={usuario}
           insumos={insumos}
           depositos={depositos.filter((d) => puedeOperarDeposito(usuario, d.id))}
+          sectores={sectores}
           onClose={() => setModalNuevo(false)}
         />
       )}
@@ -738,14 +1020,331 @@ function MovimientosView({ usuario, insumos, depositos }) {
 }
 
 // ---------------------------------------------------------------------------
+// Compras (factura de compra: cabecera + detalle -> genera entradas de stock)
+// ---------------------------------------------------------------------------
+
+function nuevaLineaDetalle() {
+  return { key: Math.random().toString(36).slice(2), insumoId: '', insumoNombreLibre: '', cantidad: '', precioUnitario: '' };
+}
+
+function RegistrarFacturaCompraForm({ usuario, insumos, depositos, proveedores, onClose }) {
+  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
+  const [cabecera, setCabecera] = useState({
+    proveedorId: '', numeroFactura: '', timbrado: '', fecha: new Date().toISOString().slice(0, 10),
+    depositoId: depositosOperables[0]?.id || '',
+  });
+  const [lineas, setLineas] = useState([nuevaLineaDetalle()]);
+  const [error, setError] = useState('');
+  const [guardando, setGuardando] = useState(false);
+
+  function actualizarLinea(key, campo, valor) {
+    setLineas((ls) => ls.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
+  }
+
+  function agregarLinea() {
+    setLineas((ls) => [...ls, nuevaLineaDetalle()]);
+  }
+
+  function quitarLinea(key) {
+    setLineas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
+  }
+
+  const total = lineas.reduce((acc, l) => acc + (Number(l.cantidad) || 0) * (Number(l.precioUnitario) || 0), 0);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setError('');
+
+    const proveedor = proveedores.find((p) => p.id === cabecera.proveedorId);
+    const deposito = depositos.find((d) => d.id === cabecera.depositoId);
+
+    if (!proveedor || !deposito || !cabecera.numeroFactura) {
+      setError('Completá proveedor, depósito y número de factura.');
+      return;
+    }
+
+    const lineasValidas = lineas.filter((l) => (l.insumoId || l.insumoNombreLibre.trim()) && Number(l.cantidad) > 0 && Number(l.precioUnitario) >= 0);
+    if (lineasValidas.length === 0) {
+      setError('Agregá al menos una línea de detalle válida (insumo, cantidad y precio).');
+      return;
+    }
+
+    setGuardando(true);
+    try {
+      const facturaRef = db.collection('facturasCompra').doc();
+      const detalleGuardado = [];
+
+      for (const linea of lineasValidas) {
+        let insumo = insumos.find((i) => i.id === linea.insumoId);
+
+        // Si el insumo no existe en el catálogo, se crea automáticamente.
+        if (!insumo) {
+          const nuevoRef = await db.collection('insumos').add({
+            nombre: linea.insumoNombreLibre.trim(),
+            categoriaId: '', subcategoria: '', unidadMedida: 'unidad', stockMinimo: 0, proveedor: proveedor.nombre, activo: true,
+          });
+          insumo = { id: nuevoRef.id, nombre: linea.insumoNombreLibre.trim() };
+        }
+
+        const cantidad = Number(linea.cantidad);
+        const precioUnitario = Number(linea.precioUnitario);
+
+        await registrarMovimiento({
+          insumo, deposito, tipo: 'entrada', cantidad, precioUnitario,
+          motivo: `Compra factura ${cabecera.numeroFactura} - ${proveedor.nombre}`,
+          usuario, proveedorId: proveedor.id, facturaCompraId: facturaRef.id,
+        });
+
+        detalleGuardado.push({
+          insumoId: insumo.id, insumoNombre: insumo.nombre, cantidad, precioUnitario,
+          subtotal: Number((cantidad * precioUnitario).toFixed(2)),
+        });
+      }
+
+      await facturaRef.set({
+        proveedorId: proveedor.id, proveedorNombre: proveedor.nombre,
+        numeroFactura: cabecera.numeroFactura, timbrado: cabecera.timbrado,
+        fecha: cabecera.fecha, depositoId: deposito.id, depositoNombre: deposito.nombre,
+        total: Number(total.toFixed(2)),
+        detalle: detalleGuardado,
+        usuarioId: usuario.uid, usuarioNombre: usuario.nombre || usuario.email,
+        fechaRegistro: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo registrar la factura de compra.');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title="Registrar factura de compra" onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Proveedor</label>
+          <select required value={cabecera.proveedorId} onChange={(e) => setCabecera({ ...cabecera, proveedorId: e.target.value })}>
+            <option value="">Seleccioná un proveedor</option>
+            {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Depósito destino</label>
+          <select required value={cabecera.depositoId} onChange={(e) => setCabecera({ ...cabecera, depositoId: e.target.value })}>
+            <option value="">Seleccioná un depósito</option>
+            {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>N° de factura</label>
+            <input required value={cabecera.numeroFactura} onChange={(e) => setCabecera({ ...cabecera, numeroFactura: e.target.value })} placeholder="172-003-0250121" />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Fecha</label>
+            <input type="date" required value={cabecera.fecha} onChange={(e) => setCabecera({ ...cabecera, fecha: e.target.value })} />
+          </div>
+        </div>
+
+        <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Detalle de insumos</label>
+        {lineas.map((l) => (
+          <div key={l.key} className="card" style={{ padding: 10, marginBottom: 8 }}>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <select
+                value={l.insumoId}
+                onChange={(e) => actualizarLinea(l.key, 'insumoId', e.target.value)}
+                style={{ marginBottom: 6 }}
+              >
+                <option value="">-- Insumo nuevo (escribir abajo) --</option>
+                {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+              </select>
+              {!l.insumoId && (
+                <input placeholder="Nombre del insumo nuevo" value={l.insumoNombreLibre} onChange={(e) => actualizarLinea(l.key, 'insumoNombreLibre', e.target.value)} />
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="number" min="0.01" step="0.01" placeholder="Cantidad" value={l.cantidad} onChange={(e) => actualizarLinea(l.key, 'cantidad', e.target.value)} />
+              <input type="number" min="0" step="0.01" placeholder="Precio unitario" value={l.precioUnitario} onChange={(e) => actualizarLinea(l.key, 'precioUnitario', e.target.value)} />
+              <button type="button" className="btn btn-danger" style={{ padding: '6px 10px', fontSize: 12 }} onClick={() => quitarLinea(l.key)}>×</button>
+            </div>
+          </div>
+        ))}
+        <button type="button" className="btn btn-outline" style={{ marginBottom: 14 }} onClick={agregarLinea}>+ Agregar línea</button>
+
+        <div className="card" style={{ padding: 10, marginBottom: 14, textAlign: 'right' }}>
+          <strong>Total: Gs. {total.toLocaleString('es-PY')}</strong>
+        </div>
+
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Registrar factura'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ComprasView({ usuario, insumos, depositos, proveedores }) {
+  const [modal, setModal] = useState(false);
+  const [facturas, setFacturas] = useState([]);
+  const puedeRegistrar = tienePermiso(usuario.rol, 'registrarCompra');
+
+  useEffect(() => {
+    const unsub = db.collection('facturasCompra').orderBy('fechaRegistro', 'desc').limit(100)
+      .onSnapshot((snap) => setFacturas(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Compras</h1>
+          <p>Registro de facturas de compra: cada línea genera una entrada de stock.</p>
+        </div>
+        {puedeRegistrar && proveedores.length > 0 && (
+          <button className="btn btn-accent" onClick={() => setModal(true)}>+ Registrar factura</button>
+        )}
+      </div>
+
+      {puedeRegistrar && proveedores.length === 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          Todavía no hay proveedores cargados. Andá a "Proveedores" y creá al menos uno antes de registrar una factura.
+        </div>
+      )}
+
+      <div className="table-wrap">
+        {facturas.length === 0 ? <EmptyState text="No hay facturas de compra registradas todavía." /> : (
+          <table>
+            <thead><tr><th>Fecha</th><th>N° Factura</th><th>Proveedor</th><th>Depósito</th><th>Total</th><th>Registrado por</th></tr></thead>
+            <tbody>
+              {facturas.map((f) => (
+                <tr key={f.id}>
+                  <td>{f.fecha}</td>
+                  <td>{f.numeroFactura}</td>
+                  <td>{f.proveedorNombre}</td>
+                  <td>{f.depositoNombre}</td>
+                  <td className="qty">Gs. {(f.total || 0).toLocaleString('es-PY')}</td>
+                  <td>{f.usuarioNombre}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modal && (
+        <RegistrarFacturaCompraForm
+          usuario={usuario} insumos={insumos}
+          depositos={depositos.filter((d) => puedeOperarDeposito(usuario, d.id))}
+          proveedores={proveedores}
+          onClose={() => setModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Configuración (logo de la empresa)
+// ---------------------------------------------------------------------------
+
+// Redimensiona y comprime una imagen en el navegador antes de guardarla como
+// base64 en Firestore (no usamos Firebase Storage para no sumar otra pieza
+// a configurar). Con esto el logo pesa unos pocos KB, bien lejos del límite
+// de 1MB por documento de Firestore.
+function redimensionarImagen(file, maxAncho) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const escala = Math.min(1, maxAncho / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * escala;
+        canvas.height = img.height * escala;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function ConfiguracionView({ configuracion }) {
+  const [nombreEmpresa, setNombreEmpresa] = useState(configuracion.nombreEmpresa || '');
+  const [logoPreview, setLogoPreview] = useState(configuracion.logoBase64 || '');
+  const [guardando, setGuardando] = useState(false);
+  const [mensaje, setMensaje] = useState('');
+
+  async function manejarArchivo(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      alert('Solo se aceptan imágenes PNG o JPG.');
+      return;
+    }
+    const dataUrl = await redimensionarImagen(file, 300);
+    setLogoPreview(dataUrl);
+  }
+
+  async function guardar() {
+    setGuardando(true);
+    setMensaje('');
+    await db.collection('configuracion').doc('empresa').set({
+      nombreEmpresa, logoBase64: logoPreview,
+    }, { merge: true });
+    setGuardando(false);
+    setMensaje('Guardado.');
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Configuración</h1>
+          <p>Nombre y logo de la empresa, usados en el login, el menú y los reportes.</p>
+        </div>
+      </div>
+
+      <div className="card" style={{ maxWidth: 420 }}>
+        <div className="field">
+          <label>Nombre de la empresa</label>
+          <input value={nombreEmpresa} onChange={(e) => setNombreEmpresa(e.target.value)} placeholder="Ej: Biggie S.A." />
+        </div>
+        <div className="field">
+          <label>Logo (PNG o JPG)</label>
+          <input type="file" accept="image/png, image/jpeg" onChange={manejarArchivo} />
+        </div>
+        {logoPreview && (
+          <div className="field">
+            <label>Vista previa</label>
+            <img src={logoPreview} alt="Logo" style={{ maxWidth: 160, maxHeight: 80, border: '1px solid var(--border)', borderRadius: 6, padding: 6 }} />
+          </div>
+        )}
+        {mensaje && <div style={{ fontSize: 12.5, color: 'var(--success)', marginBottom: 10 }}>{mensaje}</div>}
+        <button className="btn btn-primary" onClick={guardar} disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Reportes (stock actual + historial), exportables a Excel y PDF
 // ---------------------------------------------------------------------------
 
-function ReportesView({ usuario, insumos, depositos, stock }) {
+function ReportesView({ usuario, insumos, depositos, sectores, stock, configuracion }) {
   const [tab, setTab] = useState('stock');
   const [movimientos, setMovimientos] = useState([]);
   const [filtroDeposito, setFiltroDeposito] = useState('');
   const [filtroInsumo, setFiltroInsumo] = useState('');
+  const [filtroSector, setFiltroSector] = useState('');
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
 
@@ -781,6 +1380,7 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
       .filter((m) => puedeVerDeposito(usuario, m.depositoId))
       .filter((m) => !filtroDeposito || m.depositoId === filtroDeposito)
       .filter((m) => !filtroInsumo || m.insumoId === filtroInsumo)
+      .filter((m) => !filtroSector || m.sectorId === filtroSector)
       .filter((m) => {
         if (!m.fecha || !m.fecha.toDate) return true;
         const f = m.fecha.toDate();
@@ -793,38 +1393,87 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
         Tipo: m.tipo,
         Insumo: m.insumoNombre,
         Deposito: m.depositoNombre,
+        Sector: m.sectorNombre || '',
         Cantidad: m.cantidad,
+        Gasto: m.gasto != null ? m.gasto : '',
         Usuario: m.usuarioNombre,
         Motivo: m.motivo || '',
       }));
-  }, [movimientos, usuario, filtroDeposito, filtroInsumo, desde, hasta]);
+  }, [movimientos, usuario, filtroDeposito, filtroInsumo, filtroSector, desde, hasta]);
+
+  // Gasto agrupado por sector, solo salidas reales (no ajustes)
+  const filasGastoPorSector = useMemo(() => {
+    const acumulado = {};
+    movimientos
+      .filter((m) => m.tipo === 'salida' && m.gasto != null && m.sectorId)
+      .filter((m) => puedeVerDeposito(usuario, m.depositoId))
+      .filter((m) => !filtroDeposito || m.depositoId === filtroDeposito)
+      .filter((m) => !filtroSector || m.sectorId === filtroSector)
+      .filter((m) => {
+        if (!m.fecha || !m.fecha.toDate) return true;
+        const f = m.fecha.toDate();
+        if (desde && f < new Date(desde)) return false;
+        if (hasta && f > new Date(hasta + 'T23:59:59')) return false;
+        return true;
+      })
+      .forEach((m) => {
+        if (!acumulado[m.sectorId]) acumulado[m.sectorId] = { Sector: m.sectorNombre, Movimientos: 0, GastoTotal: 0 };
+        acumulado[m.sectorId].Movimientos += 1;
+        acumulado[m.sectorId].GastoTotal += m.gasto;
+      });
+    return Object.values(acumulado)
+      .map((f) => ({ ...f, GastoTotal: Number(f.GastoTotal.toFixed(2)) }))
+      .sort((a, b) => b.GastoTotal - a.GastoTotal);
+  }, [movimientos, usuario, filtroDeposito, filtroSector, desde, hasta]);
+
+  function datosSegunTab() {
+    if (tab === 'stock') return filasStock;
+    if (tab === 'historial') return filasHistorial;
+    return filasGastoPorSector;
+  }
+
+  function tituloSegunTab() {
+    if (tab === 'stock') return 'Reporte de stock actual';
+    if (tab === 'historial') return 'Historial de movimientos';
+    return 'Gasto por sector';
+  }
 
   function exportarExcel() {
-    const datos = tab === 'stock' ? filasStock : filasHistorial;
-    const nombreHoja = tab === 'stock' ? 'Stock actual' : 'Historial';
-    const ws = XLSX.utils.json_to_sheet(datos);
+    const datos = datosSegunTab();
+    if (datos.length === 0) { alert('No hay datos para exportar.'); return; }
+    const nombreHoja = tituloSegunTab();
+    const encabezado = [[configuracion.nombreEmpresa || 'Reporte de stock'], [nombreHoja], [new Date().toLocaleString('es-PY')], []];
+    const ws = XLSX.utils.aoa_to_sheet(encabezado);
+    XLSX.utils.sheet_add_json(ws, datos, { origin: -1 });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
-    XLSX.writeFile(wb, `${nombreHoja.replace(' ', '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, nombreHoja.slice(0, 28));
+    XLSX.writeFile(wb, `${nombreHoja.replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   function exportarPDF() {
-    const datos = tab === 'stock' ? filasStock : filasHistorial;
+    const datos = datosSegunTab();
     if (datos.length === 0) { alert('No hay datos para exportar.'); return; }
     const doc = new jspdf.jsPDF();
-    const titulo = tab === 'stock' ? 'Reporte de stock actual' : 'Historial de movimientos';
-    doc.setFontSize(14);
-    doc.text(titulo, 14, 16);
+    let y = 16;
+    if (configuracion.logoBase64) {
+      try { doc.addImage(configuracion.logoBase64, 'JPEG', 150, 8, 40, 20); } catch (e) { /* logo inválido, seguimos sin él */ }
+    }
+    doc.setFontSize(13);
+    doc.text(configuracion.nombreEmpresa || 'Reporte de stock', 14, y);
+    y += 7;
+    doc.setFontSize(11);
+    doc.text(tituloSegunTab(), 14, y);
+    y += 6;
     doc.setFontSize(9);
-    doc.text(new Date().toLocaleString('es-AR'), 14, 22);
+    doc.text(new Date().toLocaleString('es-PY'), 14, y);
     doc.autoTable({
-      startY: 28,
+      startY: y + 6,
       head: [Object.keys(datos[0])],
       body: datos.map((row) => Object.values(row)),
       styles: { fontSize: 8 },
       headStyles: { fillColor: [16, 27, 51] },
     });
-    doc.save(`${titulo.replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`${tituloSegunTab().replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   return (
@@ -832,7 +1481,7 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
       <div className="page-header">
         <div>
           <h1>Reportes</h1>
-          <p>Stock actual e historial de movimientos, exportables a Excel o PDF.</p>
+          <p>Stock actual, historial de movimientos y gasto por sector.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportarExcel}>Exportar Excel</button>
@@ -843,6 +1492,7 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
       <div className="tabs">
         <div className={`tab ${tab === 'stock' ? 'active' : ''}`} onClick={() => setTab('stock')}>Stock actual</div>
         <div className={`tab ${tab === 'historial' ? 'active' : ''}`} onClick={() => setTab('historial')}>Historial de movimientos</div>
+        <div className={`tab ${tab === 'gasto' ? 'active' : ''}`} onClick={() => setTab('gasto')}>Gasto por sector</div>
       </div>
 
       <div className="filters-row">
@@ -851,10 +1501,16 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
           {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
         </select>
         {tab === 'historial' && (
+          <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
+            <option value="">Todos los insumos</option>
+            {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+          </select>
+        )}
+        {(tab === 'historial' || tab === 'gasto') && (
           <React.Fragment>
-            <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
-              <option value="">Todos los insumos</option>
-              {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+            <select value={filtroSector} onChange={(e) => setFiltroSector(e.target.value)}>
+              <option value="">Todos los sectores</option>
+              {sectores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
             </select>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
             <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
@@ -863,7 +1519,7 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
       </div>
 
       <div className="table-wrap">
-        {tab === 'stock' ? (
+        {tab === 'stock' && (
           filasStock.length === 0 ? <EmptyState text="No hay datos de stock." /> : (
             <table>
               <thead><tr><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Mínimo</th><th>Alerta</th></tr></thead>
@@ -879,15 +1535,34 @@ function ReportesView({ usuario, insumos, depositos, stock }) {
               </tbody>
             </table>
           )
-        ) : (
+        )}
+        {tab === 'historial' && (
           filasHistorial.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
             <table>
-              <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Usuario</th><th>Motivo</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Sector</th><th>Cantidad</th><th>Gasto</th><th>Usuario</th><th>Motivo</th></tr></thead>
               <tbody>
                 {filasHistorial.map((f, idx) => (
                   <tr key={idx}>
-                    <td>{f.Fecha}</td><td>{f.Tipo}</td><td>{f.Insumo}</td><td>{f.Deposito}</td>
-                    <td className="qty">{f.Cantidad}</td><td>{f.Usuario}</td><td>{f.Motivo || '-'}</td>
+                    <td>{f.Fecha}</td><td>{f.Tipo}</td><td>{f.Insumo}</td><td>{f.Deposito}</td><td>{f.Sector || '-'}</td>
+                    <td className="qty">{f.Cantidad}</td>
+                    <td className="qty">{f.Gasto !== '' ? `Gs. ${f.Gasto.toLocaleString('es-PY')}` : '-'}</td>
+                    <td>{f.Usuario}</td><td>{f.Motivo || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
+        {tab === 'gasto' && (
+          filasGastoPorSector.length === 0 ? <EmptyState text="No hay gasto registrado para este filtro." /> : (
+            <table>
+              <thead><tr><th>Sector</th><th>Movimientos</th><th>Gasto total</th></tr></thead>
+              <tbody>
+                {filasGastoPorSector.map((f, idx) => (
+                  <tr key={idx}>
+                    <td>{f.Sector}</td>
+                    <td className="qty">{f.Movimientos}</td>
+                    <td className="qty">Gs. {f.GastoTotal.toLocaleString('es-PY')}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1053,7 +1728,7 @@ function UsuariosView({ depositos }) {
 // App raíz: autenticación, carga de datos en tiempo real y ruteo por rol
 // ---------------------------------------------------------------------------
 
-function AppShell({ authUser }) {
+function AppShell({ authUser, configuracion }) {
   const [usuario, setUsuario] = useState(null);
   const [cargandoPerfil, setCargandoPerfil] = useState(true);
   const [vista, setVista] = useState('dashboard');
@@ -1061,6 +1736,8 @@ function AppShell({ authUser }) {
   const [insumos, setInsumos] = useState([]);
   const [depositos, setDepositos] = useState([]);
   const [categorias, setCategorias] = useState([]);
+  const [sectores, setSectores] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
   const [stock, setStock] = useState({});
 
   // Perfil del usuario (rol, depósitos asignados)
@@ -1088,6 +1765,16 @@ function AppShell({ authUser }) {
 
   useEffect(() => {
     const unsub = db.collection('categorias').orderBy('nombre').onSnapshot((snap) => setCategorias(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('sectores').orderBy('nombre').onSnapshot((snap) => setSectores(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('proveedores').orderBy('nombre').onSnapshot((snap) => setProveedores(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return unsub;
   }, []);
 
@@ -1125,16 +1812,20 @@ function AppShell({ authUser }) {
 
   let contenido;
   if (vista === 'dashboard') contenido = <DashboardView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
-  else if (vista === 'movimientos') contenido = <MovimientosView usuario={usuario} insumos={insumos} depositos={depositos} />;
+  else if (vista === 'movimientos') contenido = <MovimientosView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} />;
+  else if (vista === 'compras' && tienePermiso(usuario.rol, 'registrarCompra')) contenido = <ComprasView usuario={usuario} insumos={insumos} depositos={depositos} proveedores={proveedores} />;
   else if (vista === 'insumos') contenido = <InsumosView usuario={usuario} insumos={insumos} categorias={categorias} />;
-  else if (vista === 'depositos') contenido = <DepositosView usuario={usuario} depositos={depositos} />;
-  else if (vista === 'reportes' && tienePermiso(usuario.rol, 'exportarReportes')) contenido = <ReportesView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
+  else if (vista === 'depositos') contenido = <DepositosView usuario={usuario} depositos={depositos} stock={stock} />;
+  else if (vista === 'sectores') contenido = <SectoresView sectores={sectores} />;
+  else if (vista === 'proveedores') contenido = <ProveedoresView proveedores={proveedores} />;
+  else if (vista === 'reportes' && tienePermiso(usuario.rol, 'exportarReportes')) contenido = <ReportesView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} stock={stock} configuracion={configuracion} />;
   else if (vista === 'usuarios' && tienePermiso(usuario.rol, 'gestionarUsuarios')) contenido = <UsuariosView depositos={depositos} />;
+  else if (vista === 'configuracion' && tienePermiso(usuario.rol, 'gestionarConfiguracion')) contenido = <ConfiguracionView configuracion={configuracion} />;
   else contenido = <DashboardView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
 
   return (
     <div className="app-shell">
-      <Sidebar vista={vista} setVista={setVista} usuario={usuario} />
+      <Sidebar vista={vista} setVista={setVista} usuario={usuario} configuracion={configuracion} />
       <div className="main">{contenido}</div>
     </div>
   );
@@ -1142,15 +1833,26 @@ function AppShell({ authUser }) {
 
 function App() {
   const [authUser, setAuthUser] = useState(undefined); // undefined = cargando, null = sin sesión
+  const [configuracion, setConfiguracion] = useState({});
 
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => setAuthUser(user || null));
     return unsub;
   }, []);
 
+  // Se carga a nivel raíz porque el logo debe verse incluso en la pantalla de login,
+  // antes de que haya una sesión iniciada (por eso la regla de Firestore permite lectura pública).
+  useEffect(() => {
+    const unsub = db.collection('configuracion').doc('empresa').onSnapshot(
+      (snap) => setConfiguracion(snap.exists ? snap.data() : {}),
+      () => setConfiguracion({}),
+    );
+    return unsub;
+  }, []);
+
   if (authUser === undefined) return <div className="loading-screen">Cargando...</div>;
-  if (authUser === null) return <LoginScreen />;
-  return <AppShell authUser={authUser} />;
+  if (authUser === null) return <LoginScreen configuracion={configuracion} />;
+  return <AppShell authUser={authUser} configuracion={configuracion} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

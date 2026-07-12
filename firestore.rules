@@ -51,7 +51,8 @@ service cloud.firestore {
     // ---------- DEPOSITOS ----------
     match /depositos/{depositoId} {
       allow read: if isSignedIn();
-      allow write: if isAdminOrSupervisor();
+      allow create, update: if isAdminOrSupervisor();
+      allow delete: if isAdmin();
     }
 
     // ---------- CATEGORIAS ----------
@@ -86,6 +87,35 @@ service cloud.firestore {
       // Un movimiento jamás se modifica ni se borra: los errores se corrigen con un
       // contramovimiento nuevo (tipo 'ajuste') que solo el Admin puede crear.
       allow update, delete: if false;
+    }
+
+    // ---------- PROVEEDORES ----------
+    match /proveedores/{proveedorId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- SECTORES (destino del gasto en cada salida) ----------
+    match /sectores/{sectorId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- FACTURAS DE COMPRA (cabecera + detalle, no se edita ni se borra) ----------
+    match /facturasCompra/{facturaId} {
+      allow read: if isSignedIn();
+      allow create: if esUsuarioActivo() && (
+        isAdminOrSupervisor() ||
+        (isEncargado() && request.resource.data.depositoId in depositosAsignados())
+      );
+      allow update, delete: if false;
+    }
+
+    // ---------- CONFIGURACION (logo, nombre de empresa) ----------
+    // Lectura pública porque el logo se muestra en la pantalla de login, antes de autenticarse.
+    match /configuracion/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }
