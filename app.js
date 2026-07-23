@@ -4,6 +4,10 @@
 
 const { useState, useEffect, useMemo, useRef } = React;
 
+// Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
+// Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
+const APP_VERSION = '1.1.0';
+
 // ---------------------------------------------------------------------------
 // Utilidades
 // ---------------------------------------------------------------------------
@@ -145,6 +149,7 @@ function Sidebar({ vista, setVista, usuario, configuracion }) {
         <div>{usuario.nombre || usuario.email}</div>
         <span className="role-tag">{ROLE_LABELS[usuario.rol] || usuario.rol}</span>
         <button onClick={() => auth.signOut()}>Cerrar sesión</button>
+        <div style={{ marginTop: 10, fontSize: 10.5, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>v{APP_VERSION}</div>
       </div>
     </div>
   );
@@ -733,7 +738,7 @@ function ProveedoresView({ proveedores }) {
 // distorsionar el promedio con correcciones administrativas.
 async function registrarMovimiento({
   insumo, deposito, tipo, cantidad, motivo, usuario,
-  precioUnitario, sector, esAjuste, movimientoOriginalId, proveedorId, facturaCompraId,
+  precioUnitario, sector, esAjuste, movimientoOriginalId, proveedorId, facturaCompraId, solicitante,
 }) {
   if (tipo === 'salida' && !esAjuste && !sector) {
     throw new Error('El sector es obligatorio para registrar una salida.');
@@ -792,6 +797,7 @@ async function registrarMovimiento({
       sectorId: sector ? sector.id : null,
       sectorNombre: sector ? sector.nombre : null,
       motivo: motivo || '',
+      solicitante: solicitante || '',
       usuarioId: usuario.uid,
       usuarioNombre: usuario.nombre || usuario.email,
       fecha: firebase.firestore.FieldValue.serverTimestamp(),
@@ -833,7 +839,7 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
   const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
   const [cabecera, setCabecera] = useState({
     depositoId: depositosOperables[0]?.id || '', sectorId: '',
-    fecha: new Date().toISOString().slice(0, 10), motivo: '',
+    fecha: new Date().toISOString().slice(0, 10), motivo: '', solicitante: '',
   });
   const [lineas, setLineas] = useState([{ key: Math.random().toString(36).slice(2), insumoTexto: '', cantidad: '' }]);
   const [error, setError] = useState('');
@@ -893,7 +899,7 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
 
         await registrarMovimiento({
           insumo, deposito, tipo: 'salida', cantidad,
-          motivo: cabecera.motivo, usuario, sector,
+          motivo: cabecera.motivo, solicitante: cabecera.solicitante, usuario, sector,
         });
 
         detalleGuardado.push({ insumoId: insumo.id, insumoNombre: insumo.nombre, cantidad });
@@ -902,7 +908,7 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
       await salidaRef.set({
         depositoId: deposito.id, depositoNombre: deposito.nombre,
         sectorId: sector.id, sectorNombre: sector.nombre,
-        fecha: cabecera.fecha, motivo: cabecera.motivo,
+        fecha: cabecera.fecha, motivo: cabecera.motivo, solicitante: cabecera.solicitante,
         detalle: detalleGuardado,
         usuarioId: usuario.uid, usuarioNombre: usuario.nombre || usuario.email,
         fechaRegistro: firebase.firestore.FieldValue.serverTimestamp(),
@@ -941,8 +947,12 @@ function RegistrarSalidaForm({ usuario, insumos, depositos, sectores, onClose })
             <input type="date" required value={cabecera.fecha} onChange={(e) => setCabecera({ ...cabecera, fecha: e.target.value })} />
           </div>
           <div className="field" style={{ flex: 1 }}>
-            <label>Motivo / Solicitante (opcional)</label>
+            <label>Motivo (opcional)</label>
             <input value={cabecera.motivo} onChange={(e) => setCabecera({ ...cabecera, motivo: e.target.value })} placeholder="Ej: reposición semanal" />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Solicitante (opcional)</label>
+            <input value={cabecera.solicitante} onChange={(e) => setCabecera({ ...cabecera, solicitante: e.target.value })} placeholder="Ej: Juan Pérez" />
           </div>
         </div>
 
@@ -1009,7 +1019,12 @@ function SalidaDetalleModal({ salida, onClose }) {
         <div><strong>Sector:</strong> {salida.sectorNombre}</div>
         <div><strong>Fecha:</strong> {salida.fecha}</div>
       </div>
-      {salida.motivo && <div style={{ marginBottom: 14, fontSize: 13.5 }}><strong>Motivo / Solicitante:</strong> {salida.motivo}</div>}
+      {(salida.motivo || salida.solicitante) && (
+        <div className="filters-row" style={{ marginBottom: 14 }}>
+          {salida.motivo && <div style={{ fontSize: 13.5 }}><strong>Motivo:</strong> {salida.motivo}</div>}
+          {salida.solicitante && <div style={{ fontSize: 13.5 }}><strong>Solicitante:</strong> {salida.solicitante}</div>}
+        </div>
+      )}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Insumo</th><th>Cantidad</th></tr></thead>
@@ -1052,7 +1067,11 @@ function exportarSalidaPDF(salida, configuracion) {
   doc.text(`Registrado por: ${salida.usuarioNombre}`, 90, y);
   y += 5;
   if (salida.motivo) {
-    doc.text(`Motivo / Solicitante: ${salida.motivo}`, 14, y);
+    doc.text(`Motivo: ${salida.motivo}`, 14, y);
+    y += 5;
+  }
+  if (salida.solicitante) {
+    doc.text(`Solicitante: ${salida.solicitante}`, 14, y);
     y += 5;
   }
   y += 4;
@@ -1070,7 +1089,7 @@ function exportarSalidaPDF(salida, configuracion) {
   doc.line(14, finalY, 110, finalY);
   doc.text('Firma de conformidad', 14, finalY + 5);
   doc.setFontSize(9);
-  doc.text(salida.motivo || salida.sectorNombre, 14, finalY + 11);
+  doc.text(salida.solicitante || salida.sectorNombre, 14, finalY + 11);
 
   doc.save(`Salida_${salida.fecha}_${salida.sectorNombre.replace(/ /g, '_')}.pdf`);
 }
@@ -1091,7 +1110,7 @@ function SalidasRegistradasTabla({ usuario, depositos, configuracion }) {
     <div className="table-wrap">
       {visibles.length === 0 ? <EmptyState text="No hay salidas registradas todavía." /> : (
         <table>
-          <thead><tr><th>Fecha</th><th>Depósito</th><th>Sector</th><th>Ítems</th><th>Motivo</th><th>Registrado por</th><th></th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Depósito</th><th>Sector</th><th>Ítems</th><th>Motivo</th><th>Solicitante</th><th>Registrado por</th><th></th></tr></thead>
           <tbody>
             {visibles.map((s) => (
               <tr key={s.id}>
@@ -1100,6 +1119,7 @@ function SalidasRegistradasTabla({ usuario, depositos, configuracion }) {
                 <td>{s.sectorNombre}</td>
                 <td className="qty">{(s.detalle || []).length}</td>
                 <td>{s.motivo || '-'}</td>
+                <td>{s.solicitante || '-'}</td>
                 <td>{s.usuarioNombre}</td>
                 <td style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerSalida(s)}>Ver</button>
@@ -1120,7 +1140,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
   const [tab, setTab] = useState('movimientos');
   const [movimientos, setMovimientos] = useState([]);
   const [filtros, setFiltros] = useState({
-    tipo: '', insumoId: '', depositoId: '', sectorId: '', usuario: '', motivo: '',
+    tipo: '', insumoId: '', depositoId: '', sectorId: '', usuario: '', motivo: '', solicitante: '',
   });
   const puedeRegistrar = tienePermiso(usuario.rol, 'registrarMovimiento');
   const puedeAnular = tienePermiso(usuario.rol, 'anularMovimiento');
@@ -1142,7 +1162,8 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
     .filter((m) => !filtros.depositoId || m.depositoId === filtros.depositoId)
     .filter((m) => !filtros.sectorId || m.sectorId === filtros.sectorId)
     .filter((m) => !filtros.usuario || (m.usuarioNombre || '').toLowerCase().includes(filtros.usuario.toLowerCase()))
-    .filter((m) => !filtros.motivo || (m.motivo || '').toLowerCase().includes(filtros.motivo.toLowerCase()));
+    .filter((m) => !filtros.motivo || (m.motivo || '').toLowerCase().includes(filtros.motivo.toLowerCase()))
+    .filter((m) => !filtros.solicitante || (m.solicitante || '').toLowerCase().includes(filtros.solicitante.toLowerCase()));
 
   const depositosVisiblesList = depositosVisibles(usuario, depositos);
 
@@ -1175,7 +1196,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
           {movimientos.length === 0 ? <EmptyState text="No hay movimientos todavía." /> : (
             <table>
               <thead>
-                <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th>{puedeAnular && <th></th>}</tr>
+                <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th>{puedeAnular && <th></th>}</tr>
                 <tr className="filter-row">
                   <th></th>
                   <th>
@@ -1211,12 +1232,15 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
                   <th>
                     <input placeholder="Buscar..." value={filtros.motivo} onChange={(e) => setFiltro('motivo', e.target.value)} />
                   </th>
+                  <th>
+                    <input placeholder="Buscar..." value={filtros.solicitante} onChange={(e) => setFiltro('solicitante', e.target.value)} />
+                  </th>
                   {puedeAnular && <th></th>}
                 </tr>
               </thead>
               <tbody>
                 {visibles.length === 0 ? (
-                  <tr><td colSpan={puedeAnular ? 10 : 9}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
+                  <tr><td colSpan={puedeAnular ? 11 : 10}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
                 ) : visibles.map((m) => (
                   <tr key={m.id}>
                     <td>{formatFecha(m.fecha)}</td>
@@ -1230,6 +1254,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
                     <td className="qty">{m.gasto != null ? formatGs(m.gasto) : '-'}</td>
                     <td>{m.usuarioNombre}</td>
                     <td>{m.motivo || '-'}{m.movimientoOriginalId ? ' (ajuste)' : ''}</td>
+                    <td>{m.solicitante || '-'}</td>
                     {puedeAnular && (
                       <td>
                         {!m.movimientoOriginalId && (
@@ -1715,6 +1740,7 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
         Gasto: m.gasto != null ? m.gasto : '',
         Usuario: m.usuarioNombre,
         Motivo: m.motivo || '',
+        Solicitante: m.solicitante || '',
       }));
   }, [movimientos, usuario, filtroDeposito, filtroInsumo, filtroSector, desde, hasta]);
 
@@ -1856,14 +1882,14 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
         {tab === 'historial' && (
           filasHistorial.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
             <table>
-              <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Sector</th><th>Cantidad</th><th>Gasto</th><th>Usuario</th><th>Motivo</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Sector</th><th>Cantidad</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th></tr></thead>
               <tbody>
                 {filasHistorial.map((f, idx) => (
                   <tr key={idx}>
                     <td>{f.Fecha}</td><td>{f.Tipo}</td><td>{f.Insumo}</td><td>{f.Deposito}</td><td>{f.Sector || '-'}</td>
                     <td className="qty">{f.Cantidad}</td>
                     <td className="qty">{f.Gasto !== '' ? formatGs(f.Gasto) : '-'}</td>
-                    <td>{f.Usuario}</td><td>{f.Motivo || '-'}</td>
+                    <td>{f.Usuario}</td><td>{f.Motivo || '-'}</td><td>{f.Solicitante || '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1977,9 +2003,77 @@ function NuevoUsuarioForm({ depositos, onClose }) {
   );
 }
 
+function EditarUsuarioForm({ usuario, depositos, onClose }) {
+  const [form, setForm] = useState({
+    nombre: usuario.nombre || '',
+    rol: usuario.rol,
+    depositosAsignados: usuario.depositosAsignados || [],
+  });
+  const [guardando, setGuardando] = useState(false);
+
+  function toggleDeposito(id) {
+    setForm((f) => ({
+      ...f,
+      depositosAsignados: f.depositosAsignados.includes(id)
+        ? f.depositosAsignados.filter((x) => x !== id)
+        : [...f.depositosAsignados, id],
+    }));
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    setGuardando(true);
+    await db.collection('usuarios').doc(usuario.id).update({
+      nombre: form.nombre,
+      rol: form.rol,
+      depositosAsignados: form.rol === ROLES.ENCARGADO ? form.depositosAsignados : [],
+    });
+    setGuardando(false);
+    onClose();
+  }
+
+  return (
+    <Modal title="Editar usuario" onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Email</label>
+          <input value={usuario.email} disabled style={{ background: '#F5F6F8', color: 'var(--text-muted)' }} />
+          <div className="hint">El email no se puede cambiar desde acá (es la identidad de acceso en Firebase Authentication).</div>
+        </div>
+        <div className="field">
+          <label>Nombre</label>
+          <input required value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Rol</label>
+          <select value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
+            {Object.values(ROLES).map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+          </select>
+        </div>
+        {form.rol === ROLES.ENCARGADO && (
+          <div className="field">
+            <label>Depósitos asignados</label>
+            {depositos.map((d) => (
+              <label key={d.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 400, fontSize: 13, marginBottom: 4 }}>
+                <input type="checkbox" style={{ width: 'auto' }} checked={form.depositosAsignados.includes(d.id)} onChange={() => toggleDeposito(d.id)} />
+                {d.nombre}
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function UsuariosView({ depositos }) {
   const [usuarios, setUsuarios] = useState([]);
   const [modalNuevo, setModalNuevo] = useState(false);
+  const [modalEditar, setModalEditar] = useState(null);
 
   useEffect(() => {
     const unsub = db.collection('usuarios').onSnapshot((snap) => setUsuarios(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -1988,10 +2082,6 @@ function UsuariosView({ depositos }) {
 
   async function toggleActivo(u) {
     await db.collection('usuarios').doc(u.id).update({ activo: !u.activo });
-  }
-
-  async function cambiarRol(u, rol) {
-    await db.collection('usuarios').doc(u.id).update({ rol, depositosAsignados: rol === ROLES.ENCARGADO ? (u.depositosAsignados || []) : [] });
   }
 
   function nombreDeposito(id) {
@@ -2016,16 +2106,13 @@ function UsuariosView({ depositos }) {
               <tr key={u.id}>
                 <td>{u.nombre}</td>
                 <td>{u.email}</td>
-                <td>
-                  <select value={u.rol} onChange={(e) => cambiarRol(u, e.target.value)} style={{ padding: '5px 8px', fontSize: 12.5, border: '1px solid var(--border)', borderRadius: 6 }}>
-                    {Object.values(ROLES).map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                  </select>
-                </td>
+                <td>{ROLE_LABELS[u.rol] || u.rol}</td>
                 <td style={{ fontSize: 12.5 }}>
                   {u.rol === ROLES.ENCARGADO ? (u.depositosAsignados || []).map(nombreDeposito).join(', ') || '-' : 'Todos'}
                 </td>
                 <td>{u.activo ? 'Sí' : 'No'}</td>
-                <td>
+                <td style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-outline" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setModalEditar(u)}>Editar</button>
                   <button className="btn btn-outline" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => toggleActivo(u)}>
                     {u.activo ? 'Desactivar' : 'Activar'}
                   </button>
@@ -2037,6 +2124,7 @@ function UsuariosView({ depositos }) {
       </div>
 
       {modalNuevo && <NuevoUsuarioForm depositos={depositos} onClose={() => setModalNuevo(false)} />}
+      {modalEditar && <EditarUsuarioForm usuario={modalEditar} depositos={depositos} onClose={() => setModalEditar(null)} />}
     </div>
   );
 }
