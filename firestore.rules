@@ -111,6 +111,24 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---------- SALIDAS MULTIPLES (cabecera + detalle, no se edita ni se borra) ----------
+    match /salidas/{salidaId} {
+      allow read: if isSignedIn();
+      allow create: if esUsuarioActivo() && (
+        isAdminOrSupervisor() ||
+        (isEncargado() && request.resource.data.depositoId in depositosAsignados())
+      );
+      allow update, delete: if false;
+    }
+
+    // ---------- CONTADORES (numeración automática de movimientos) ----------
+    // Se actualiza dentro de la misma transacción que crea un movimiento,
+    // así que cualquiera que pueda registrar un movimiento puede tocar esto.
+    match /contadores/{contadorId} {
+      allow read: if isSignedIn();
+      allow write: if esUsuarioActivo();
+    }
+
     // ---------- CONFIGURACION (logo, nombre de empresa) ----------
     // Lectura pública porque el logo se muestra en la pantalla de login, antes de autenticarse.
     match /configuracion/{docId} {

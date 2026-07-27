@@ -3,6 +3,19 @@
 Todas las versiones y qué cambió en cada una. El número de versión visible en
 el pie del menú lateral de la app corresponde a la última entrada de acá.
 
+## [1.2.0] - 2026-07-27
+- **Numeración automática de operaciones**: cada movimiento (entrada, salida
+  o ajuste) ahora tiene un número secuencial único (columna "N°"), asignado
+  de forma atómica junto con la transacción de stock — no se pueden repetir
+  ni saltear números aunque dos personas registren al mismo tiempo. Visible
+  en el historial de "Movimientos" y en el historial de "Reportes". Las
+  anulaciones ahora referencian el número de operación en vez del ID interno
+  de Firestore, mucho más legible.
+- **Reportes → Stock actual**: los filtros pasaron a estar directamente en el
+  encabezado de la tabla (estilo planilla), uno por columna — Insumo (buscar
+  por texto), Depósito (desplegable), Cantidad y Mínimo (valor exacto), y
+  Alerta (Sí/No). Se pueden combinar varios filtros a la vez.
+
 ## [1.1.0] - 2026-07-23
 - El campo único "Motivo / Solicitante" del formulario de Salida se separó en
   dos campos independientes: **Motivo** y **Solicitante**. Se reflejan por

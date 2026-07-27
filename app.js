@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -747,9 +747,14 @@ async function registrarMovimiento({
   const stockId = stockDocId(insumo.id, deposito.id);
   const stockRef = db.collection('stock').doc(stockId);
   const movRef = db.collection('movimientos').doc();
+  const contadorRef = db.collection('contadores').doc('movimientos');
 
   await db.runTransaction(async (tx) => {
+    // Todas las lecturas de una transacción van antes que cualquier escritura.
     const stockSnap = await tx.get(stockRef);
+    const contadorSnap = await tx.get(contadorRef);
+    const numeroMovimiento = (contadorSnap.exists ? contadorSnap.data().ultimo : 0) + 1;
+
     const stockData = stockSnap.exists ? stockSnap.data() : {};
     const cantidadActual = stockData.cantidad || 0;
     const costoPromedioActual = stockData.costoPromedio || 0;
@@ -785,7 +790,10 @@ async function registrarMovimiento({
       costoPromedio: nuevoCostoPromedio,
     }, { merge: true });
 
+    tx.set(contadorRef, { ultimo: numeroMovimiento }, { merge: true });
+
     tx.set(movRef, {
+      numero: numeroMovimiento,
       insumoId: insumo.id,
       insumoNombre: insumo.nombre,
       depositoId: deposito.id,
@@ -824,7 +832,7 @@ async function anularMovimiento(movimiento, insumos, depositos, usuario) {
     insumo, deposito,
     tipo: tipoInverso,
     cantidad: movimiento.cantidad,
-    motivo: `Anulación del movimiento ${movimiento.id}`,
+    motivo: `Anulación de la operación #${movimiento.numero || movimiento.id}`,
     usuario,
     esAjuste: true,
     sector,
@@ -1196,8 +1204,9 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
           {movimientos.length === 0 ? <EmptyState text="No hay movimientos todavía." /> : (
             <table>
               <thead>
-                <tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th>{puedeAnular && <th></th>}</tr>
+                <tr><th>N°</th><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Sector</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th>{puedeAnular && <th></th>}</tr>
                 <tr className="filter-row">
+                  <th></th>
                   <th></th>
                   <th>
                     <select value={filtros.tipo} onChange={(e) => setFiltro('tipo', e.target.value)}>
@@ -1240,9 +1249,10 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
               </thead>
               <tbody>
                 {visibles.length === 0 ? (
-                  <tr><td colSpan={puedeAnular ? 11 : 10}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
+                  <tr><td colSpan={puedeAnular ? 12 : 11}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
                 ) : visibles.map((m) => (
                   <tr key={m.id}>
+                    <td className="qty">{m.numero || '-'}</td>
                     <td>{formatFecha(m.fecha)}</td>
                     <td>
                       <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
@@ -1687,8 +1697,13 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
   const [filtroDeposito, setFiltroDeposito] = useState('');
   const [filtroInsumo, setFiltroInsumo] = useState('');
   const [filtroSector, setFiltroSector] = useState('');
+  const [filtrosStock, setFiltrosStock] = useState({ insumo: '', cantidad: '', minimo: '', alerta: '' });
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
+
+  function setFiltroStock(campo, valor) {
+    setFiltrosStock((f) => ({ ...f, [campo]: valor }));
+  }
 
   useEffect(() => {
     const unsub = db.collection('movimientos').orderBy('fecha', 'desc').limit(1000)
@@ -1704,18 +1719,26 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
       depositosVisiblesList.forEach((dep) => {
         if (filtroDeposito && dep.id !== filtroDeposito) return;
         const s = stock[stockDocId(insumo.id, dep.id)];
+        const cantidad = s ? s.cantidad : 0;
+        const alerta = cantidad <= insumo.stockMinimo ? 'SI' : 'NO';
+
+        if (filtrosStock.insumo && !insumo.nombre.toLowerCase().includes(filtrosStock.insumo.toLowerCase())) return;
+        if (filtrosStock.cantidad !== '' && cantidad !== Number(filtrosStock.cantidad)) return;
+        if (filtrosStock.minimo !== '' && insumo.stockMinimo !== Number(filtrosStock.minimo)) return;
+        if (filtrosStock.alerta && alerta !== filtrosStock.alerta) return;
+
         out.push({
           Insumo: insumo.nombre,
           Deposito: dep.nombre,
-          Cantidad: s ? s.cantidad : 0,
+          Cantidad: cantidad,
           Unidad: insumo.unidadMedida,
           Minimo: insumo.stockMinimo,
-          Alerta: (s ? s.cantidad : 0) <= insumo.stockMinimo ? 'SI' : 'NO',
+          Alerta: alerta,
         });
       });
     });
     return out;
-  }, [insumos, depositosVisiblesList, stock, filtroDeposito]);
+  }, [insumos, depositosVisiblesList, stock, filtroDeposito, filtrosStock]);
 
   const filasHistorial = useMemo(() => {
     return movimientos
@@ -1731,6 +1754,7 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
         return true;
       })
       .map((m) => ({
+        Numero: m.numero || '',
         Fecha: formatFecha(m.fecha),
         Tipo: m.tipo,
         Insumo: m.insumoNombre,
@@ -1839,10 +1863,12 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
       </div>
 
       <div className="filters-row">
-        <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
-          <option value="">Todos los depósitos</option>
-          {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-        </select>
+        {tab !== 'stock' && (
+          <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
+            <option value="">Todos los depósitos</option>
+            {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+          </select>
+        )}
         {tab === 'historial' && (
           <select value={filtroInsumo} onChange={(e) => setFiltroInsumo(e.target.value)}>
             <option value="">Todos los insumos</option>
@@ -1865,7 +1891,33 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
         {tab === 'stock' && (
           filasStock.length === 0 ? <EmptyState text="No hay datos de stock." /> : (
             <table>
-              <thead><tr><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Mínimo</th><th>Alerta</th></tr></thead>
+              <thead>
+                <tr><th>Insumo</th><th>Depósito</th><th>Cantidad</th><th>Mínimo</th><th>Alerta</th></tr>
+                <tr className="filter-row">
+                  <th>
+                    <input placeholder="Buscar..." value={filtrosStock.insumo} onChange={(e) => setFiltroStock('insumo', e.target.value)} />
+                  </th>
+                  <th>
+                    <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
+                      <option value="">Todos</option>
+                      {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+                    </select>
+                  </th>
+                  <th>
+                    <input type="number" placeholder="Exacto" value={filtrosStock.cantidad} onChange={(e) => setFiltroStock('cantidad', e.target.value)} />
+                  </th>
+                  <th>
+                    <input type="number" placeholder="Exacto" value={filtrosStock.minimo} onChange={(e) => setFiltroStock('minimo', e.target.value)} />
+                  </th>
+                  <th>
+                    <select value={filtrosStock.alerta} onChange={(e) => setFiltroStock('alerta', e.target.value)}>
+                      <option value="">Todos</option>
+                      <option value="SI">Sí</option>
+                      <option value="NO">No</option>
+                    </select>
+                  </th>
+                </tr>
+              </thead>
               <tbody>
                 {filasStock.map((f, idx) => (
                   <tr key={idx}>
@@ -1882,10 +1934,11 @@ function ReportesView({ usuario, insumos, depositos, sectores, stock, configurac
         {tab === 'historial' && (
           filasHistorial.length === 0 ? <EmptyState text="No hay movimientos para este filtro." /> : (
             <table>
-              <thead><tr><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Sector</th><th>Cantidad</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th></tr></thead>
+              <thead><tr><th>N°</th><th>Fecha</th><th>Tipo</th><th>Insumo</th><th>Depósito</th><th>Sector</th><th>Cantidad</th><th>Gasto</th><th>Usuario</th><th>Motivo</th><th>Solicitante</th></tr></thead>
               <tbody>
                 {filasHistorial.map((f, idx) => (
                   <tr key={idx}>
+                    <td className="qty">{f.Numero || '-'}</td>
                     <td>{f.Fecha}</td><td>{f.Tipo}</td><td>{f.Insumo}</td><td>{f.Deposito}</td><td>{f.Sector || '-'}</td>
                     <td className="qty">{f.Cantidad}</td>
                     <td className="qty">{f.Gasto !== '' ? formatGs(f.Gasto) : '-'}</td>
