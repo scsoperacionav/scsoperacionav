@@ -260,7 +260,14 @@ button, input, select {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  overflow: hidden;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Que la tabla no se comprima de más cuando hay muchas columnas: fuerza el
+   ancho mínimo y deja que .table-wrap se encargue del scroll horizontal. */
+.table-wrap table {
+  min-width: max-content;
 }
 
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
