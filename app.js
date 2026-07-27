@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -123,33 +123,53 @@ const NAV_ITEMS = [
   { id: 'configuracion', label: 'Configuración', permiso: 'gestionarConfiguracion' },
 ];
 
-function Sidebar({ vista, setVista, usuario, configuracion }) {
+function Sidebar({ vista, setVista, usuario, configuracion, colapsado, onToggleColapso }) {
+  const itemsVisibles = NAV_ITEMS.filter((item) => !item.permiso || tienePermiso(usuario.rol, item.permiso));
+
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${colapsado ? 'sidebar-colapsado' : ''}`}>
       <div className="sidebar-brand">
-        {configuracion.logoBase64 ? (
-          <img src={configuracion.logoBase64} alt="Logo" style={{ height: 26, width: 'auto', borderRadius: 4 }} />
-        ) : (
-          <span className="mark">#</span>
+        {!colapsado && (
+          configuracion.logoBase64 ? (
+            <img src={configuracion.logoBase64} alt="Logo" style={{ height: 26, width: 'auto', borderRadius: 4 }} />
+          ) : (
+            <span className="mark">#</span>
+          )
         )}
-        <span className="name">{configuracion.nombreEmpresa || 'Stock Ops'}</span>
+        {!colapsado && <span className="name">{configuracion.nombreEmpresa || 'Stock Ops'}</span>}
+        <button
+          className="sidebar-toggle"
+          onClick={onToggleColapso}
+          title={colapsado ? 'Expandir menú' : 'Ocultar menú'}
+        >
+          {colapsado ? '»' : '«'}
+        </button>
       </div>
+
       <nav>
-        {NAV_ITEMS.filter((item) => !item.permiso || tienePermiso(usuario.rol, item.permiso)).map((item) => (
+        {itemsVisibles.map((item) => (
           <button
             key={item.id}
             className={`nav-item ${vista === item.id ? 'active' : ''}`}
             onClick={() => setVista(item.id)}
+            title={colapsado ? item.label : undefined}
           >
-            {item.label}
+            {colapsado ? item.label.charAt(0) : item.label}
           </button>
         ))}
       </nav>
+
       <div className="sidebar-footer">
-        <div>{usuario.nombre || usuario.email}</div>
-        <span className="role-tag">{ROLE_LABELS[usuario.rol] || usuario.rol}</span>
-        <button onClick={() => auth.signOut()}>Cerrar sesión</button>
-        <div style={{ marginTop: 10, fontSize: 10.5, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>v{APP_VERSION}</div>
+        {!colapsado && (
+          <React.Fragment>
+            <div>{usuario.nombre || usuario.email}</div>
+            <span className="role-tag">{ROLE_LABELS[usuario.rol] || usuario.rol}</span>
+          </React.Fragment>
+        )}
+        <button onClick={() => auth.signOut()} title={colapsado ? 'Cerrar sesión' : undefined}>
+          {colapsado ? '⏻' : 'Cerrar sesión'}
+        </button>
+        {!colapsado && <div style={{ marginTop: 10, fontSize: 10.5, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>v{APP_VERSION}</div>}
       </div>
     </div>
   );
@@ -2190,6 +2210,17 @@ function AppShell({ authUser, configuracion }) {
   const [usuario, setUsuario] = useState(null);
   const [cargandoPerfil, setCargandoPerfil] = useState(true);
   const [vista, setVista] = useState('dashboard');
+  const [sidebarColapsado, setSidebarColapsado] = useState(() => {
+    try { return localStorage.getItem('sidebarColapsado') === '1'; } catch (e) { return false; }
+  });
+
+  function toggleSidebar() {
+    setSidebarColapsado((actual) => {
+      const nuevo = !actual;
+      try { localStorage.setItem('sidebarColapsado', nuevo ? '1' : '0'); } catch (e) { /* sin acceso a localStorage, no pasa nada */ }
+      return nuevo;
+    });
+  }
 
   const [insumos, setInsumos] = useState([]);
   const [depositos, setDepositos] = useState([]);
@@ -2283,7 +2314,10 @@ function AppShell({ authUser, configuracion }) {
 
   return (
     <div className="app-shell">
-      <Sidebar vista={vista} setVista={setVista} usuario={usuario} configuracion={configuracion} />
+      <Sidebar
+        vista={vista} setVista={setVista} usuario={usuario} configuracion={configuracion}
+        colapsado={sidebarColapsado} onToggleColapso={toggleSidebar}
+      />
       <div className="main">{contenido}</div>
     </div>
   );

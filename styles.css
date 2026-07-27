@@ -56,11 +56,36 @@ button, input, select {
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
+  transition: width 0.15s ease, padding 0.15s ease;
+  overflow: hidden;
 }
+
+.sidebar.sidebar-colapsado {
+  width: 60px;
+  padding: 20px 8px;
+}
+
+.sidebar-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--sidebar-text);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover { background: rgba(255,255,255,0.08); }
+.sidebar-colapsado .sidebar-toggle { margin: 0 auto; }
+.sidebar-colapsado .nav-item { text-align: center; padding: 10px 0; font-family: var(--font-mono); }
+.sidebar-colapsado .sidebar-footer button { padding: 6px 0; }
 
 .sidebar-brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   padding: 6px 10px 22px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
