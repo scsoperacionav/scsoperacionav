@@ -129,6 +129,13 @@ service cloud.firestore {
       allow write: if esUsuarioActivo();
     }
 
+    // ---------- AJUSTES DE INVENTARIO (cabecera + detalle, no se edita ni se borra) ----------
+    match /ajustesInventario/{ajusteId} {
+      allow read: if isSignedIn();
+      allow create: if esUsuarioActivo() && isAdminOrSupervisor();
+      allow update, delete: if false;
+    }
+
     // ---------- CONFIGURACION (logo, nombre de empresa) ----------
     // Lectura pública porque el logo se muestra en la pantalla de login, antes de autenticarse.
     match /configuracion/{docId} {

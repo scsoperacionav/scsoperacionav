@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.4.0';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -119,6 +119,8 @@ const NAV_ITEMS = [
   { id: 'sectores', label: 'Sectores', permiso: null },
   { id: 'proveedores', label: 'Proveedores', permiso: null },
   { id: 'reportes', label: 'Reportes', permiso: 'exportarReportes' },
+  { id: 'tomaInventario', label: 'Toma de Inventario', permiso: 'imprimirTomaInventario' },
+  { id: 'ajusteInventario', label: 'Ajuste de Inventario', permiso: 'ajustarInventario' },
   { id: 'usuarios', label: 'Usuarios', permiso: 'gestionarUsuarios' },
   { id: 'configuracion', label: 'Configuración', permiso: 'gestionarConfiguracion' },
 ];
@@ -1627,6 +1629,409 @@ function ComprasView({ usuario, insumos, depositos, proveedores }) {
 }
 
 // ---------------------------------------------------------------------------
+// Toma de Inventario: planilla imprimible por depósito, para contar en mano.
+// ---------------------------------------------------------------------------
+
+function exportarTomaInventarioPDF(deposito, filasInsumos, configuracion) {
+  const doc = new jspdf.jsPDF();
+  let y = 16;
+
+  if (configuracion.logoBase64) {
+    try { doc.addImage(configuracion.logoBase64, 'JPEG', 150, 8, 40, 20); } catch (e) { /* logo inválido */ }
+  }
+
+  doc.setFontSize(13);
+  doc.text(configuracion.nombreEmpresa || 'Toma de Inventario', 14, y);
+  y += 7;
+  doc.setFontSize(11);
+  doc.text(`Toma de inventario — ${deposito.nombre}`, 14, y);
+  y += 6;
+  doc.setFontSize(9);
+  doc.text(`Fecha: ${new Date().toLocaleDateString('es-PY')}`, 14, y);
+  doc.text('Responsable del conteo: _______________________', 90, y);
+  y += 8;
+
+  doc.autoTable({
+    startY: y,
+    head: [['Insumo', 'Unidad', 'Stock sistema', 'Cantidad contada', 'Diferencia']],
+    body: filasInsumos.map((i) => [i.nombre, i.unidadMedida, i.stockSistema, '', '']),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [16, 27, 51] },
+    columnStyles: {
+      3: { cellWidth: 30 },
+      4: { cellWidth: 26 },
+    },
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 16;
+  doc.setFontSize(9);
+  doc.text('Firma del responsable: _______________________', 14, finalY);
+
+  doc.save(`Toma_inventario_${deposito.nombre.replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+function TomaInventarioView({ usuario, insumos, depositos, stock, configuracion }) {
+  const depositosVisiblesList = depositosVisibles(usuario, depositos);
+  const [depositoId, setDepositoId] = useState(depositosVisiblesList[0]?.id || '');
+  const deposito = depositos.find((d) => d.id === depositoId);
+
+  const filasInsumos = useMemo(() => {
+    if (!deposito) return [];
+    return insumos
+      .map((i) => ({
+        id: i.id,
+        nombre: i.nombre,
+        unidadMedida: i.unidadMedida,
+        stockSistema: (stock[stockDocId(i.id, deposito.id)] || {}).cantidad || 0,
+      }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [insumos, stock, deposito]);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Toma de Inventario</h1>
+          <p>Generá la planilla de un depósito para contar físicamente, y descargala en PDF.</p>
+        </div>
+        {deposito && (
+          <button className="btn btn-accent" onClick={() => exportarTomaInventarioPDF(deposito, filasInsumos, configuracion)}>
+            Descargar PDF para contar
+          </button>
+        )}
+      </div>
+
+      <div className="filters-row">
+        <select value={depositoId} onChange={(e) => setDepositoId(e.target.value)}>
+          {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+        </select>
+      </div>
+
+      <div className="table-wrap">
+        {filasInsumos.length === 0 ? <EmptyState text="No hay insumos para este depósito." /> : (
+          <table>
+            <thead><tr><th>Insumo</th><th>Unidad</th><th>Stock sistema</th></tr></thead>
+            <tbody>
+              {filasInsumos.map((i) => (
+                <tr key={i.id}>
+                  <td>{i.nombre}</td>
+                  <td>{i.unidadMedida}</td>
+                  <td className="qty">{i.stockSistema}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ajuste de Inventario: corrige el stock del sistema con lo contado en mano.
+// Genera movimientos de tipo "ajuste" (no afectan el costo promedio) y deja
+// un registro agrupado (cabecera + detalle) para auditoría, igual que
+// Compras y Salidas.
+// ---------------------------------------------------------------------------
+
+function ConteoCompletoForm({ usuario, insumos, depositos, stock, onClose }) {
+  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
+  const [depositoId, setDepositoId] = useState(depositosOperables[0]?.id || '');
+  const deposito = depositos.find((d) => d.id === depositoId);
+  const [contados, setContados] = useState({}); // insumoId -> valor tipeado (string)
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  const filas = useMemo(() => {
+    if (!deposito) return [];
+    return insumos
+      .map((i) => ({
+        id: i.id,
+        nombre: i.nombre,
+        unidadMedida: i.unidadMedida,
+        stockSistema: (stock[stockDocId(i.id, deposito.id)] || {}).cantidad || 0,
+      }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [insumos, stock, deposito]);
+
+  function actualizarContado(insumoId, valor) {
+    setContados((c) => ({ ...c, [insumoId]: valor }));
+  }
+
+  const filasConDiferencia = filas
+    .filter((f) => contados[f.id] !== undefined && contados[f.id] !== '')
+    .map((f) => ({ ...f, contado: Number(contados[f.id]), diferencia: Number(contados[f.id]) - f.stockSistema }))
+    .filter((f) => f.diferencia !== 0);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setError('');
+    if (!deposito) { setError('Elegí un depósito.'); return; }
+    if (filasConDiferencia.length === 0) { setError('No cargaste ninguna diferencia para ajustar (todo lo contado coincide con el sistema, o no cargaste nada).'); return; }
+
+    setGuardando(true);
+    try {
+      const ajusteRef = db.collection('ajustesInventario').doc();
+      const detalleGuardado = [];
+
+      for (const f of filasConDiferencia) {
+        const insumo = { id: f.id, nombre: f.nombre };
+        await registrarMovimiento({
+          insumo, deposito,
+          tipo: f.diferencia > 0 ? 'entrada' : 'salida',
+          cantidad: Math.abs(f.diferencia),
+          esAjuste: true,
+          motivo: 'Ajuste por toma de inventario',
+          usuario,
+        });
+        detalleGuardado.push({ insumoId: f.id, insumoNombre: f.nombre, stockSistema: f.stockSistema, stockContado: f.contado, diferencia: f.diferencia });
+      }
+
+      await ajusteRef.set({
+        depositoId: deposito.id, depositoNombre: deposito.nombre,
+        tipo: 'conteo_completo',
+        detalle: detalleGuardado,
+        usuarioId: usuario.uid, usuarioNombre: usuario.nombre || usuario.email,
+        fecha: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo registrar el ajuste.');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title="Conteo completo de depósito" onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Depósito</label>
+          <select required value={depositoId} onChange={(e) => { setDepositoId(e.target.value); setContados({}); }}>
+            <option value="">Seleccioná un depósito</option>
+            {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+          </select>
+        </div>
+        <div className="hint" style={{ marginBottom: 10 }}>
+          Cargá la cantidad contada solo en los insumos donde encontraste una diferencia. Los que dejes vacíos no se tocan.
+        </div>
+
+        {deposito && (
+          <table className="detalle-table">
+            <thead>
+              <tr><th>Insumo</th><th className="col-cantidad">Stock sistema</th><th className="col-cantidad">Cantidad contada</th><th className="col-cantidad">Diferencia</th></tr>
+            </thead>
+            <tbody>
+              {filas.map((f) => {
+                const valor = contados[f.id];
+                const diferencia = valor !== undefined && valor !== '' ? Number(valor) - f.stockSistema : null;
+                return (
+                  <tr key={f.id}>
+                    <td>{f.nombre} <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>({f.unidadMedida})</span></td>
+                    <td className="col-cantidad" style={{ paddingTop: 9 }}>{f.stockSistema}</td>
+                    <td className="col-cantidad">
+                      <input type="number" min="0" step="0.01" value={valor === undefined ? '' : valor} onChange={(e) => actualizarContado(f.id, e.target.value)} />
+                    </td>
+                    <td className="col-cantidad" style={{ paddingTop: 9, color: diferencia > 0 ? 'var(--success)' : diferencia < 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+                      {diferencia !== null ? (diferencia > 0 ? `+${diferencia}` : diferencia) : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando || filasConDiferencia.length === 0}>
+            {guardando ? 'Guardando...' : `Registrar ${filasConDiferencia.length} ajuste(s)`}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AjusteRapidoForm({ usuario, insumos, depositos, stock, onClose }) {
+  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
+  const [depositoId, setDepositoId] = useState(depositosOperables[0]?.id || '');
+  const [insumoTexto, setInsumoTexto] = useState('');
+  const [cantidadReal, setCantidadReal] = useState('');
+  const [error, setError] = useState('');
+  const [guardando, setGuardando] = useState(false);
+
+  const deposito = depositos.find((d) => d.id === depositoId);
+  const insumo = insumos.find((i) => i.nombre.trim().toLowerCase() === insumoTexto.trim().toLowerCase());
+  const stockSistema = insumo && deposito ? ((stock[stockDocId(insumo.id, deposito.id)] || {}).cantidad || 0) : null;
+  const diferencia = stockSistema !== null && cantidadReal !== '' ? Number(cantidadReal) - stockSistema : null;
+
+  async function guardar(e) {
+    e.preventDefault();
+    setError('');
+    if (!deposito || !insumo || cantidadReal === '') {
+      setError('Completá depósito, un insumo que exista en el catálogo, y la cantidad real.');
+      return;
+    }
+    if (diferencia === 0) {
+      setError('La cantidad contada es igual a la del sistema, no hay nada que ajustar.');
+      return;
+    }
+    setGuardando(true);
+    try {
+      await registrarMovimiento({
+        insumo, deposito,
+        tipo: diferencia > 0 ? 'entrada' : 'salida',
+        cantidad: Math.abs(diferencia),
+        esAjuste: true,
+        motivo: 'Ajuste rápido de inventario',
+        usuario,
+      });
+
+      await db.collection('ajustesInventario').add({
+        depositoId: deposito.id, depositoNombre: deposito.nombre,
+        tipo: 'ajuste_rapido',
+        detalle: [{ insumoId: insumo.id, insumoNombre: insumo.nombre, stockSistema, stockContado: Number(cantidadReal), diferencia }],
+        usuarioId: usuario.uid, usuarioNombre: usuario.nombre || usuario.email,
+        fecha: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo registrar el ajuste.');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title="Ajuste rápido de un insumo" onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Depósito</label>
+          <select required value={depositoId} onChange={(e) => setDepositoId(e.target.value)}>
+            <option value="">Seleccioná un depósito</option>
+            {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Insumo</label>
+          <datalist id="lista-insumos-ajuste">
+            {insumos.map((i) => <option key={i.id} value={i.nombre} />)}
+          </datalist>
+          <input list="lista-insumos-ajuste" placeholder="Escribí para buscar" value={insumoTexto} onChange={(e) => setInsumoTexto(e.target.value)} />
+        </div>
+        {stockSistema !== null && (
+          <div className="hint" style={{ marginBottom: 10 }}>Stock actual en el sistema: <strong>{stockSistema}</strong></div>
+        )}
+        <div className="field">
+          <label>Cantidad real (contada)</label>
+          <input type="number" min="0" step="0.01" value={cantidadReal} onChange={(e) => setCantidadReal(e.target.value)} />
+        </div>
+        {diferencia !== null && (
+          <div className="hint" style={{ marginBottom: 10, color: diferencia > 0 ? 'var(--success)' : diferencia < 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+            Diferencia: {diferencia > 0 ? `+${diferencia}` : diferencia}
+          </div>
+        )}
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Registrar ajuste'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AjusteDetalleModal({ ajuste, onClose }) {
+  return (
+    <Modal title={`Ajuste — ${ajuste.depositoNombre}`} onClose={onClose} wide>
+      <div className="filters-row" style={{ marginBottom: 14 }}>
+        <div><strong>Depósito:</strong> {ajuste.depositoNombre}</div>
+        <div><strong>Tipo:</strong> {ajuste.tipo === 'conteo_completo' ? 'Conteo completo' : 'Ajuste rápido'}</div>
+        <div><strong>Registrado por:</strong> {ajuste.usuarioNombre}</div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Insumo</th><th>Stock sistema</th><th>Stock contado</th><th>Diferencia</th></tr></thead>
+          <tbody>
+            {(ajuste.detalle || []).map((d, idx) => (
+              <tr key={idx}>
+                <td>{d.insumoNombre}</td>
+                <td className="qty">{d.stockSistema}</td>
+                <td className="qty">{d.stockContado}</td>
+                <td className="qty" style={{ color: d.diferencia > 0 ? 'var(--success)' : 'var(--danger)' }}>
+                  {d.diferencia > 0 ? `+${d.diferencia}` : d.diferencia}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-primary" onClick={onClose}>Cerrar</button>
+      </div>
+    </Modal>
+  );
+}
+
+function AjusteInventarioView({ usuario, insumos, depositos, stock }) {
+  const [modalConteo, setModalConteo] = useState(false);
+  const [modalRapido, setModalRapido] = useState(false);
+  const [ajustes, setAjustes] = useState([]);
+  const [verAjuste, setVerAjuste] = useState(null);
+
+  useEffect(() => {
+    const unsub = db.collection('ajustesInventario').orderBy('fecha', 'desc').limit(100)
+      .onSnapshot((snap) => setAjustes(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  const visibles = ajustes.filter((a) => puedeVerDeposito(usuario, a.depositoId));
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Ajuste de Inventario</h1>
+          <p>Corregí el stock del sistema según lo contado físicamente. Genera un ajuste auditado, sin afectar el costo promedio.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-outline" onClick={() => setModalRapido(true)}>Ajuste rápido</button>
+          <button className="btn btn-accent" onClick={() => setModalConteo(true)}>+ Conteo completo</button>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        {visibles.length === 0 ? <EmptyState text="No hay ajustes de inventario registrados todavía." /> : (
+          <table>
+            <thead><tr><th>Fecha</th><th>Depósito</th><th>Tipo</th><th>Ítems ajustados</th><th>Registrado por</th><th></th></tr></thead>
+            <tbody>
+              {visibles.map((a) => (
+                <tr key={a.id}>
+                  <td>{formatFecha(a.fecha)}</td>
+                  <td>{a.depositoNombre}</td>
+                  <td>{a.tipo === 'conteo_completo' ? 'Conteo completo' : 'Ajuste rápido'}</td>
+                  <td className="qty">{(a.detalle || []).length}</td>
+                  <td>{a.usuarioNombre}</td>
+                  <td><button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setVerAjuste(a)}>Ver</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modalConteo && <ConteoCompletoForm usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} onClose={() => setModalConteo(false)} />}
+      {modalRapido && <AjusteRapidoForm usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} onClose={() => setModalRapido(false)} />}
+      {verAjuste && <AjusteDetalleModal ajuste={verAjuste} onClose={() => setVerAjuste(null)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Configuración (logo de la empresa)
 // ---------------------------------------------------------------------------
 
@@ -2320,6 +2725,8 @@ function AppShell({ authUser, configuracion }) {
   else if (vista === 'sectores') contenido = <SectoresView sectores={sectores} />;
   else if (vista === 'proveedores') contenido = <ProveedoresView proveedores={proveedores} />;
   else if (vista === 'reportes' && tienePermiso(usuario.rol, 'exportarReportes')) contenido = <ReportesView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} stock={stock} configuracion={configuracion} />;
+  else if (vista === 'tomaInventario' && tienePermiso(usuario.rol, 'imprimirTomaInventario')) contenido = <TomaInventarioView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} configuracion={configuracion} />;
+  else if (vista === 'ajusteInventario' && tienePermiso(usuario.rol, 'ajustarInventario')) contenido = <AjusteInventarioView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
   else if (vista === 'usuarios' && tienePermiso(usuario.rol, 'gestionarUsuarios')) contenido = <UsuariosView depositos={depositos} />;
   else if (vista === 'configuracion' && tienePermiso(usuario.rol, 'gestionarConfiguracion')) contenido = <ConfiguracionView configuracion={configuracion} />;
   else contenido = <DashboardView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;

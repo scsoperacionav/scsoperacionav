@@ -3,6 +3,36 @@
 Todas las versiones y qué cambió en cada una. El número de versión visible en
 el pie del menú lateral de la app corresponde a la última entrada de acá.
 
+## [1.4.0] - 2026-07-27
+- **Nuevo módulo "Toma de Inventario"**: elegís un depósito y descargás un
+  PDF con todos sus insumos, stock del sistema, y columnas en blanco para
+  anotar la cantidad contada y la diferencia — listo para imprimir y usar en
+  el conteo físico. Disponible también para Encargado de Depósito (solo
+  lectura/impresión, no modifica nada).
+- **Nuevo módulo "Ajuste de Inventario"** (Admin y Supervisor): permite
+  corregir el stock del sistema según lo contado. Dos formas de cargarlo:
+  - **Conteo completo**: tabla con todos los insumos de un depósito, cargás
+    la cantidad contada donde haya diferencia, y el sistema genera todos los
+    ajustes juntos.
+  - **Ajuste rápido**: corrige un solo insumo puntual sin tener que recontar
+    todo el depósito.
+  Los ajustes se registran como movimientos tipo "ajuste" (no afectan el
+  costo promedio ponderado, no piden sector) y quedan en un historial propio
+  con botón "Ver", igual que Compras y Salidas.
+
+## [1.3.2] - 2026-07-27
+- **Corrección importante**: el botón "Anular" ya no queda disponible en un
+  movimiento que ya fue anulado antes — evita generar dos correcciones sobre
+  el mismo movimiento (lo que dejaría el stock mal calculado). Ahora, un
+  movimiento ya anulado se ve atenuado en la tabla con una etiqueta
+  "Anulado" al lado del tipo.
+
+## [1.3.1] - 2026-07-27
+- **Corrección**: las tablas con muchas columnas (Movimientos, Reportes) ya
+  no recortan las últimas columnas cuando no entran en el ancho de la
+  pantalla — ahora aparece una barra de scroll horizontal en la tabla en vez
+  de tapar el contenido.
+
 ## [1.3.0] - 2026-07-27
 - **Menú lateral colapsable**: nuevo botón (« / ») arriba del menú para
   ocultarlo o desplegarlo. Colapsado, muestra solo la inicial de cada

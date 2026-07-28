@@ -31,6 +31,8 @@ const PERMISSIONS = {
   gestionarSectores: [ROLES.ADMIN, ROLES.SUPERVISOR],
   registrarCompra: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
   gestionarConfiguracion: [ROLES.ADMIN],
+  imprimirTomaInventario: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
+  ajustarInventario: [ROLES.ADMIN, ROLES.SUPERVISOR],
 };
 
 function tienePermiso(rolUsuario, permiso) {
