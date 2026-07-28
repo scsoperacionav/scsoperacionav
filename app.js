@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -1195,7 +1195,18 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
 
   const depositosVisiblesList = depositosVisibles(usuario, depositos);
 
+  // IDs de movimientos que YA tienen un ajuste de anulación generado (para no
+  // permitir anular dos veces el mismo movimiento y para marcarlo visualmente).
+  const idsAnulados = useMemo(
+    () => new Set(movimientos.filter((m) => m.movimientoOriginalId).map((m) => m.movimientoOriginalId)),
+    [movimientos]
+  );
+
   async function handleAnular(m) {
+    if (idsAnulados.has(m.id)) {
+      alert('Este movimiento ya fue anulado antes. No se puede anular dos veces.');
+      return;
+    }
     if (!confirm('¿Anular este movimiento? Se va a generar un movimiento inverso para dejar el stock correcto.')) return;
     try {
       await anularMovimiento(m, insumos, depositos, usuario);
@@ -1271,11 +1282,12 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
                 {visibles.length === 0 ? (
                   <tr><td colSpan={puedeAnular ? 12 : 11}><EmptyState text="No hay movimientos que coincidan con los filtros." /></td></tr>
                 ) : visibles.map((m) => (
-                  <tr key={m.id}>
+                  <tr key={m.id} style={idsAnulados.has(m.id) ? { opacity: 0.6 } : undefined}>
                     <td className="qty">{m.numero || '-'}</td>
                     <td>{formatFecha(m.fecha)}</td>
                     <td>
                       <span className={`bin-tag ${m.tipo === 'salida' ? 'low' : ''}`}>{m.tipo}</span>
+                      {idsAnulados.has(m.id) && <span className="role-badge" style={{ marginLeft: 6 }}>Anulado</span>}
                     </td>
                     <td>{m.insumoNombre}</td>
                     <td>{m.depositoNombre}</td>
@@ -1287,7 +1299,7 @@ function MovimientosView({ usuario, insumos, depositos, sectores, configuracion 
                     <td>{m.solicitante || '-'}</td>
                     {puedeAnular && (
                       <td>
-                        {!m.movimientoOriginalId && (
+                        {!m.movimientoOriginalId && !idsAnulados.has(m.id) && (
                           <button className="btn btn-danger" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => handleAnular(m)}>Anular</button>
                         )}
                       </td>
