@@ -3,6 +3,25 @@
 Todas las versiones y qué cambió en cada una. El número de versión visible en
 el pie del menú lateral de la app corresponde a la última entrada de acá.
 
+## [1.5.1] - 2026-07-27
+- **Código automático por activo**: cada activo recibe un código secuencial
+  (ACT-00001, ACT-00002...) asignado de forma atómica al crearlo, con el
+  mismo mecanismo de contador que usa la numeración de movimientos. Visible
+  en la tabla, el formulario, el modal de QR, la ficha PDF, la plancha de
+  etiquetas y la ficha pública del QR.
+- **Foto del activo** (opcional): se puede adjuntar una foto al cargar o
+  editar un activo (se redimensiona y comprime en el navegador, igual que el
+  logo de la empresa). Aparece como miniatura en la tabla, y completa en el
+  modal de QR, la ficha PDF y la ficha pública.
+- **Corrección**: al editar un activo, el campo "Costo" ahora sí carga el
+  valor guardado anteriormente (antes aparecía vacío porque el costo vive en
+  un documento aparte, de lectura restringida).
+- Encabezado de versión agregado a `firestore.rules`, para poder confirmar
+  de un vistazo si las reglas publicadas en Firebase Console están al día
+  con la versión de la app.
+- La ficha pública del QR ahora muestra el motivo real del error si algo
+  falla al cargar (antes siempre mostraba el mismo mensaje genérico).
+
 ## [1.5.0] - 2026-07-27
 - **Nuevo módulo "Activos"**: registro de bienes (muebles, sillas, cortinas y
   demás) con ubicación jerárquica (Piso / Depósito / Rack / Fila / Columna,

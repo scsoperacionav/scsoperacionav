@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -2202,7 +2202,19 @@ async function exportarFichaActivoPDF(activo, configuracion) {
   y += 10;
   doc.setFontSize(15);
   doc.text(activo.nombre, 14, y);
-  y += 10;
+  y += 6;
+  doc.setFontSize(10);
+  doc.setTextColor(120);
+  doc.text(activo.codigo || '', 14, y);
+  doc.setTextColor(0);
+  y += 8;
+
+  if (activo.fotoBase64) {
+    try {
+      doc.addImage(activo.fotoBase64, 'JPEG', 14, y, 180, 55);
+      y += 60;
+    } catch (e) { /* foto inválida, seguimos sin ella */ }
+  }
 
   doc.addImage(qrDataUrl, 'PNG', 14, y, 55, 55);
 
@@ -2272,6 +2284,10 @@ async function exportarPlanchaQRPDF(activos, configuracion) {
     doc.setTextColor(20);
     const nombreCorto = doc.splitTextToSize(activo.nombre, cellW - 8);
     doc.text(nombreCorto, x + 2, yPos + 48);
+    doc.setFontSize(7);
+    doc.setTextColor(120);
+    doc.text(activo.codigo || '', x + 2, yPos + 48 + nombreCorto.length * 3.5);
+    doc.setTextColor(20);
 
     col++;
     if (col >= cols) {
@@ -2296,8 +2312,30 @@ function ActivoForm({ activo, usuario, depositos, tiposActivo, pisos, racks, fil
     pisoId: '', depositoId: depositosOperables[0]?.id || '', rackId: '', filaId: '', columnaId: '',
     costo: '',
   });
+  const [fotoBase64, setFotoBase64] = useState(activo ? activo.fotoBase64 || '' : '');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+
+  // El costo vive en "activosCosto" (documento aparte, de lectura restringida),
+  // así que si estamos editando hay que traerlo aparte para no mostrar el
+  // campo vacío como si nunca se hubiera cargado un costo.
+  useEffect(() => {
+    if (!activo) return;
+    db.collection('activosCosto').doc(activo.id).get().then((snap) => {
+      if (snap.exists) setForm((f) => ({ ...f, costo: snap.data().costo }));
+    });
+  }, [activo]);
+
+  async function manejarFoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      alert('Solo se aceptan imágenes PNG o JPG.');
+      return;
+    }
+    const dataUrl = await redimensionarImagen(file, 500);
+    setFotoBase64(dataUrl);
+  }
 
   function nombreDe(lista, id) {
     const it = lista.find((x) => x.id === id);
@@ -2325,14 +2363,27 @@ function ActivoForm({ activo, usuario, depositos, tiposActivo, pisos, racks, fil
         rackId: form.rackId, rackNombre: nombreDe(racks, form.rackId),
         filaId: form.filaId, filaNombre: nombreDe(filas, form.filaId),
         columnaId: form.columnaId, columnaNombre: nombreDe(columnas, form.columnaId),
+        fotoBase64: fotoBase64 || '',
       };
 
       let activoId = activo ? activo.id : null;
       if (activo) {
         await db.collection('activos').doc(activo.id).update(datosPublicos);
       } else {
-        const ref = await db.collection('activos').add(datosPublicos);
-        activoId = ref.id;
+        // El código (ACT-00001, ACT-00002...) se asigna dentro de una
+        // transacción con un contador atómico, igual que la numeración de
+        // movimientos: así nunca se repite aunque se creen varios activos
+        // al mismo tiempo desde distintas sesiones.
+        const nuevoRef = db.collection('activos').doc();
+        const contadorRef = db.collection('contadores').doc('activos');
+        await db.runTransaction(async (tx) => {
+          const contadorSnap = await tx.get(contadorRef);
+          const numero = (contadorSnap.exists ? contadorSnap.data().ultimo : 0) + 1;
+          const codigo = `ACT-${String(numero).padStart(5, '0')}`;
+          tx.set(contadorRef, { ultimo: numero }, { merge: true });
+          tx.set(nuevoRef, { ...datosPublicos, codigo });
+        });
+        activoId = nuevoRef.id;
       }
 
       // El costo vive en un documento aparte, de lectura restringida (ver firestore.rules).
@@ -2351,6 +2402,11 @@ function ActivoForm({ activo, usuario, depositos, tiposActivo, pisos, racks, fil
   return (
     <Modal title={activo ? 'Editar activo' : 'Nuevo activo'} onClose={onClose} wide>
       <form onSubmit={guardar}>
+        {activo ? (
+          <div className="hint" style={{ marginBottom: 10, fontFamily: 'var(--font-mono)', fontSize: 13 }}>Código: {activo.codigo || '-'}</div>
+        ) : (
+          <div className="hint" style={{ marginBottom: 10 }}>El código (ACT-00001, etc.) se asigna automáticamente al guardar.</div>
+        )}
         <div style={{ display: 'flex', gap: 10 }}>
           <div className="field" style={{ flex: 2 }}>
             <label>Nombre</label>
@@ -2427,6 +2483,19 @@ function ActivoForm({ activo, usuario, depositos, tiposActivo, pisos, racks, fil
           <textarea rows="2" value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} />
         </div>
 
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Foto (opcional)</label>
+            <input type="file" accept="image/png, image/jpeg" onChange={manejarFoto} />
+          </div>
+          {fotoBase64 && (
+            <div className="field">
+              <label>Vista previa</label>
+              <img src={fotoBase64} alt="Foto del activo" style={{ maxWidth: 140, maxHeight: 100, border: '1px solid var(--border)', borderRadius: 6, padding: 4 }} />
+            </div>
+          )}
+        </div>
+
         <div className="field" style={{ maxWidth: 220 }}>
           <label>Costo / valor (opcional)</label>
           <input type="number" min="0" step="1" value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} />
@@ -2453,6 +2522,12 @@ function QRActivoModal({ activo, configuracion, onClose }) {
 
   return (
     <Modal title={`QR — ${activo.nombre}`} onClose={onClose}>
+      <div className="hint" style={{ marginBottom: 10, fontFamily: 'var(--font-mono)', fontSize: 13 }}>Código: {activo.codigo || '-'}</div>
+      {activo.fotoBase64 && (
+        <div style={{ textAlign: 'center', marginBottom: 12 }}>
+          <img src={activo.fotoBase64} alt={activo.nombre} style={{ maxWidth: '100%', maxHeight: 160, borderRadius: 8, border: '1px solid var(--border)' }} />
+        </div>
+      )}
       <div style={{ textAlign: 'center', marginBottom: 14 }}>
         {qrDataUrl ? <img src={qrDataUrl} alt="QR" style={{ width: 200, height: 200 }} /> : <div style={{ height: 200 }} />}
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, wordBreak: 'break-all' }}>{url}</div>
@@ -2537,13 +2612,21 @@ function ActivosView({ usuario, activos, depositos, tiposActivo, pisos, racks, f
           <table>
             <thead>
               <tr>
-                <th></th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th>Ubicación</th><th>Estado</th><th></th>
+                <th></th><th></th><th>Código</th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th>Ubicación</th><th>Estado</th><th></th>
               </tr>
             </thead>
             <tbody>
               {visibles.map((a) => (
                 <tr key={a.id}>
                   <td><input type="checkbox" checked={seleccionados.has(a.id)} onChange={() => toggleSeleccion(a.id)} /></td>
+                  <td>
+                    {a.fotoBase64 ? (
+                      <img src={a.fotoBase64} alt={a.nombre} style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                    ) : (
+                      <div style={{ width: 36, height: 36, borderRadius: 6, background: '#F0F1F5' }} />
+                    )}
+                  </td>
+                  <td className="qty" style={{ fontSize: 12 }}>{a.codigo || '-'}</td>
                   <td>{a.nombre}</td>
                   <td>{a.tipoNombre || '-'}</td>
                   <td className="qty">{a.cantidad}</td>

@@ -1,3 +1,8 @@
+// Reglas de seguridad de Firestore — Control de Stock (Toku Importados)
+// Corresponde a la versión de la app: v1.5.1 (ver CHANGELOG.md)
+// Actualizar este comentario cada vez que se publican reglas nuevas, para
+// poder confirmar de un vistazo si lo publicado en Firebase Console está
+// al día con la versión de la app.
 rules_version = '2';
 
 service cloud.firestore {

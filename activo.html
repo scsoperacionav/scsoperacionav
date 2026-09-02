@@ -127,7 +127,9 @@
 
         contenido.innerHTML = `
           <div class="ficha-brand">${brandHtml}<span>${nombreEmpresa || 'Ficha de activo'}</span></div>
+          ${a.fotoBase64 ? `<img src="${a.fotoBase64}" alt="${a.nombre}" style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin-bottom:12px;" />` : ''}
           <h1 class="ficha-titulo">${a.nombre}</h1>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">${a.codigo || ''}</div>
           <div class="role-badge">${ESTADO_LABELS[a.estado] || a.estado || ''}</div>
           <div style="margin-top:14px;">
             ${formatearFila('Tipo', a.tipoNombre)}
@@ -138,7 +140,9 @@
           ${a.descripcion ? `<div class="ficha-desc">${a.descripcion}</div>` : ''}
         `;
       } catch (err) {
-        contenido.innerHTML = '<div class="ficha-estado-msg">No se pudo cargar la ficha. Revisá tu conexión e intentá de nuevo.</div>';
+        console.error('Error cargando ficha de activo:', err);
+        const codigo = err && err.code ? ` (${err.code})` : '';
+        contenido.innerHTML = `<div class="ficha-estado-msg">No se pudo cargar la ficha${codigo}.<br>Si el problema persiste, avisá al administrador del sistema.</div>`;
       }
     }
 
