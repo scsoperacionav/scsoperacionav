@@ -1,0 +1,13 @@
+{
+  "name": "Ficha de Activos",
+  "short_name": "Activos",
+  "description": "Escaneo de QR y ficha de activos del depósito",
+  "start_url": "activo.html",
+  "display": "standalone",
+  "background_color": "#101B33",
+  "theme_color": "#101B33",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

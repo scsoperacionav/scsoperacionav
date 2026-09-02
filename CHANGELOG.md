@@ -3,6 +3,26 @@
 Todas las versiones y qué cambió en cada una. El número de versión visible en
 el pie del menú lateral de la app corresponde a la última entrada de acá.
 
+## [1.5.0] - 2026-07-27
+- **Nuevo módulo "Activos"**: registro de bienes (muebles, sillas, cortinas y
+  demás) con ubicación jerárquica (Piso / Depósito / Rack / Fila / Columna,
+  todos catálogos dinámicos gestionables desde "Catálogos de Activos"). Cada
+  activo puede representar un ítem único o un grupo (con cantidad).
+- **QR automático por activo**: se genera en el navegador (sin depender de
+  ningún servicio externo) y apunta a una ficha del activo. Se puede
+  descargar una ficha individual en PDF (QR + datos + espacio para pegar), o
+  seleccionar varios activos e imprimir una plancha de etiquetas QR juntas
+  para recortar.
+- **Página pública `activo.html`** (sin login): al escanear el QR desde
+  cualquier celular se abre la ficha del activo — nombre, tipo, cantidad,
+  estado, fecha de ingreso y ubicación. Instalable como PWA para acceso
+  rápido del personal. El costo/valor del activo (si se carga) **no** es
+  parte de esta página pública — vive en un documento aparte de lectura
+  restringida, solo visible logueado en el sistema.
+- Permisos nuevos: gestión de Activos (Admin, Supervisor y Encargado en sus
+  depósitos), eliminación (solo Admin), y catálogos de tipos/ubicación
+  (Admin y Supervisor).
+
 ## [1.4.0] - 2026-07-27
 - **Nuevo módulo "Toma de Inventario"**: elegís un depósito y descargás un
   PDF con todos sus insumos, stock del sistema, y columnas en blanco para

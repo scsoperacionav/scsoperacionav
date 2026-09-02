@@ -33,6 +33,9 @@ const PERMISSIONS = {
   gestionarConfiguracion: [ROLES.ADMIN],
   imprimirTomaInventario: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
   ajustarInventario: [ROLES.ADMIN, ROLES.SUPERVISOR],
+  gestionarActivos: [ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.ENCARGADO],
+  eliminarActivos: [ROLES.ADMIN],
+  gestionarCatalogosActivos: [ROLES.ADMIN, ROLES.SUPERVISOR],
 };
 
 function tienePermiso(rolUsuario, permiso) {

@@ -136,6 +136,50 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---------- CATÁLOGOS DE ACTIVOS (tipos, pisos, racks, filas, columnas) ----------
+    match /tiposActivo/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+    match /pisos/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+    match /racks/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+    match /filas/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+    match /columnas/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrSupervisor();
+    }
+
+    // ---------- ACTIVOS (muebles, sillas, cortinas, etc.) ----------
+    // LECTURA PÚBLICA A PROPÓSITO: la página del QR (activo.html) se abre sin
+    // login desde el celular de cualquiera que escanee el código. Por eso acá
+    // solo viven los datos que está bien que cualquiera con el QR pueda ver.
+    // El costo/valor NO vive en este documento (ver "activosCosto" abajo).
+    match /activos/{activoId} {
+      allow read: if true;
+      allow create, update: if esUsuarioActivo() && (
+        isAdminOrSupervisor() ||
+        (isEncargado() && request.resource.data.depositoId in depositosAsignados())
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Costo/valor del activo, en un documento APARTE con el mismo ID, de
+    // lectura restringida — así queda realmente oculto para quien solo tiene
+    // el link del QR, no solo oculto "a nivel de pantalla".
+    match /activosCosto/{activoId} {
+      allow read: if isSignedIn();
+      allow write: if esUsuarioActivo() && isAdminOrSupervisor();
+    }
+
     // ---------- CONFIGURACION (logo, nombre de empresa) ----------
     // Lectura pública porque el logo se muestra en la pantalla de login, antes de autenticarse.
     match /configuracion/{docId} {

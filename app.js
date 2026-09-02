@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -121,6 +121,8 @@ const NAV_ITEMS = [
   { id: 'reportes', label: 'Reportes', permiso: 'exportarReportes' },
   { id: 'tomaInventario', label: 'Toma de Inventario', permiso: 'imprimirTomaInventario' },
   { id: 'ajusteInventario', label: 'Ajuste de Inventario', permiso: 'ajustarInventario' },
+  { id: 'activos', label: 'Activos', permiso: null },
+  { id: 'catalogosActivos', label: 'Catálogos de Activos', permiso: 'gestionarCatalogosActivos' },
   { id: 'usuarios', label: 'Usuarios', permiso: 'gestionarUsuarios' },
   { id: 'configuracion', label: 'Configuración', permiso: 'gestionarConfiguracion' },
 ];
@@ -2032,6 +2034,551 @@ function AjusteInventarioView({ usuario, insumos, depositos, stock }) {
 }
 
 // ---------------------------------------------------------------------------
+// Catálogos simples reutilizables (Tipos de activo, Pisos, Racks, Filas, Columnas)
+// Todos son colecciones planas con un solo campo "nombre" — se reutiliza el
+// mismo formulario/tabla para las cinco, cambiando solo la colección y la
+// etiqueta que se muestra.
+// ---------------------------------------------------------------------------
+
+function CatalogoSimpleForm({ coleccion, item, etiqueta, placeholder, onClose }) {
+  const [nombre, setNombre] = useState(item ? item.nombre : '');
+  const [guardando, setGuardando] = useState(false);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setGuardando(true);
+    if (item) {
+      await db.collection(coleccion).doc(item.id).update({ nombre });
+    } else {
+      await db.collection(coleccion).add({ nombre, activo: true });
+    }
+    setGuardando(false);
+    onClose();
+  }
+
+  return (
+    <Modal title={item ? `Editar ${etiqueta}` : `Nuevo ${etiqueta}`} onClose={onClose}>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Nombre</label>
+          <input required value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder={placeholder} autoFocus />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CatalogoSimpleView({ coleccion, etiqueta, etiquetaPlural, placeholder, items, puedeEscribir }) {
+  const [modal, setModal] = useState(null);
+
+  async function eliminar(item) {
+    if (!confirm(`¿Eliminar "${item.nombre}"? Los activos que ya lo usan conservan el nombre guardado, pero no vas a poder elegirlo de nuevo.`)) return;
+    await db.collection(coleccion).doc(item.id).delete();
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>{etiquetaPlural}</h1>
+        </div>
+        {puedeEscribir && <button className="btn btn-accent" onClick={() => setModal('nuevo')}>+ Nuevo {etiqueta}</button>}
+      </div>
+
+      <div className="table-wrap">
+        {items.length === 0 ? <EmptyState text={`No hay ${etiquetaPlural.toLowerCase()} creados todavía.`} /> : (
+          <table>
+            <thead><tr><th>Nombre</th>{puedeEscribir && <th></th>}</tr></thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.id}>
+                  <td>{it.nombre}</td>
+                  {puedeEscribir && (
+                    <td style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(it)}>Editar</button>
+                      <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminar(it)}>Eliminar</button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modal && (
+        <CatalogoSimpleForm
+          coleccion={coleccion} etiqueta={etiqueta} placeholder={placeholder}
+          item={modal === 'nuevo' ? null : modal}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CatalogosActivosView({ usuario, tiposActivo, pisos, racks, filas, columnas }) {
+  const [tab, setTab] = useState('tipos');
+  const puedeEscribir = tienePermiso(usuario.rol, 'gestionarCatalogosActivos');
+
+  const TABS = [
+    { id: 'tipos', label: 'Tipos de activo', coleccion: 'tiposActivo', etiqueta: 'tipo', items: tiposActivo, placeholder: 'Ej: Silla, Mueble, Cortina' },
+    { id: 'pisos', label: 'Pisos', coleccion: 'pisos', etiqueta: 'piso', items: pisos, placeholder: 'Ej: Planta baja, Piso 1' },
+    { id: 'racks', label: 'Racks', coleccion: 'racks', etiqueta: 'rack', items: racks, placeholder: 'Ej: Rack A' },
+    { id: 'filas', label: 'Filas', coleccion: 'filas', etiqueta: 'fila', items: filas, placeholder: 'Ej: Fila 3' },
+    { id: 'columnas', label: 'Columnas', coleccion: 'columnas', etiqueta: 'columna', items: columnas, placeholder: 'Ej: Columna 2' },
+  ];
+  const actual = TABS.find((t) => t.id === tab);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Catálogos de Activos</h1>
+          <p>Tipos y ubicación (Piso / Rack / Fila / Columna) que se usan al registrar un activo.</p>
+        </div>
+      </div>
+      <div className="tabs">
+        {TABS.map((t) => (
+          <div key={t.id} className={`tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</div>
+        ))}
+      </div>
+      <CatalogoSimpleView
+        coleccion={actual.coleccion} etiqueta={actual.etiqueta} etiquetaPlural={actual.label}
+        placeholder={actual.placeholder} items={actual.items} puedeEscribir={puedeEscribir}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activos (muebles, sillas, cortinas y demás bienes con seguimiento por QR)
+// ---------------------------------------------------------------------------
+
+const ESTADOS_ACTIVO = ['activo', 'mantenimiento', 'baja'];
+const ESTADO_LABELS = { activo: 'Activo', mantenimiento: 'En mantenimiento', baja: 'De baja' };
+
+// Genera la imagen del QR (como PNG en base64) enteramente en el navegador,
+// sin depender de ningún servicio externo. QRCode.js dibuja en un <canvas>
+// oculto y de ahí se extrae la imagen.
+function generarQRDataURL(texto, tamano) {
+  return new Promise((resolve) => {
+    const contenedor = document.createElement('div');
+    contenedor.style.position = 'fixed';
+    contenedor.style.left = '-9999px';
+    document.body.appendChild(contenedor);
+    new QRCode(contenedor, { text: texto, width: tamano || 240, height: tamano || 240, correctLevel: QRCode.CorrectLevel.M });
+    setTimeout(() => {
+      const canvas = contenedor.querySelector('canvas');
+      const dataUrl = canvas ? canvas.toDataURL('image/png') : '';
+      document.body.removeChild(contenedor);
+      resolve(dataUrl);
+    }, 80);
+  });
+}
+
+// URL base de la página pública del QR. Se arma a partir de dónde está
+// corriendo la app ahora mismo, así funciona igual en local y en producción
+// sin tener que hardcodear el dominio de GitHub Pages.
+function urlBaseActivos() {
+  return window.location.href.replace(/index\.html?$/, '').replace(/\/?$/, '/') + 'activo.html';
+}
+
+async function exportarFichaActivoPDF(activo, configuracion) {
+  const url = `${urlBaseActivos()}?id=${activo.id}`;
+  const qrDataUrl = await generarQRDataURL(url, 300);
+
+  const doc = new jspdf.jsPDF();
+  let y = 16;
+  if (configuracion.logoBase64) {
+    try { doc.addImage(configuracion.logoBase64, 'JPEG', 150, 8, 40, 20); } catch (e) { /* logo inválido */ }
+  }
+  doc.setFontSize(13);
+  doc.text(configuracion.nombreEmpresa || 'Ficha de activo', 14, y);
+  y += 10;
+  doc.setFontSize(15);
+  doc.text(activo.nombre, 14, y);
+  y += 10;
+
+  doc.addImage(qrDataUrl, 'PNG', 14, y, 55, 55);
+
+  const xTexto = 78;
+  let yTexto = y + 6;
+  doc.setFontSize(10);
+  const lineas = [
+    ['Tipo', activo.tipoNombre || '-'],
+    ['Cantidad', String(activo.cantidad || 1)],
+    ['Estado', ESTADO_LABELS[activo.estado] || activo.estado],
+    ['Fecha de ingreso', activo.fechaIngreso || '-'],
+    ['Piso', activo.pisoNombre || '-'],
+    ['Depósito', activo.depositoNombre || '-'],
+    ['Rack', activo.rackNombre || '-'],
+    ['Fila', activo.filaNombre || '-'],
+    ['Columna', activo.columnaNombre || '-'],
+  ];
+  lineas.forEach(([label, valor]) => {
+    doc.setFont(undefined, 'bold');
+    doc.text(`${label}:`, xTexto, yTexto);
+    doc.setFont(undefined, 'normal');
+    doc.text(String(valor), xTexto + 32, yTexto);
+    yTexto += 6;
+  });
+
+  y += 62;
+  if (activo.descripcion) {
+    doc.setFontSize(9);
+    doc.text('Descripción:', 14, y);
+    const partido = doc.splitTextToSize(activo.descripcion, 180);
+    doc.text(partido, 14, y + 5);
+    y += 5 + partido.length * 4.5;
+  }
+
+  doc.setFontSize(8);
+  doc.setTextColor(120);
+  doc.text('Escaneá el código QR para ver esta ficha desde el celular.', 14, 285);
+
+  doc.save(`Activo_${activo.nombre.replace(/ /g, '_')}.pdf`);
+}
+
+async function exportarPlanchaQRPDF(activos, configuracion) {
+  const doc = new jspdf.jsPDF();
+  const cols = 3;
+  const marginX = 12;
+  const marginY = 16;
+  const cellW = 62;
+  const cellH = 68;
+  let col = 0;
+  let row = 0;
+  let y = marginY;
+
+  doc.setFontSize(12);
+  doc.text(configuracion.nombreEmpresa || 'Etiquetas de activos', marginX, 10);
+
+  for (const activo of activos) {
+    const url = `${urlBaseActivos()}?id=${activo.id}`;
+    const qrDataUrl = await generarQRDataURL(url, 200);
+
+    const x = marginX + col * cellW;
+    const yPos = marginY + row * cellH;
+
+    doc.setDrawColor(210);
+    doc.rect(x, yPos, cellW - 4, cellH - 4);
+    doc.addImage(qrDataUrl, 'PNG', x + (cellW - 4 - 40) / 2, yPos + 4, 40, 40);
+    doc.setFontSize(8);
+    doc.setTextColor(20);
+    const nombreCorto = doc.splitTextToSize(activo.nombre, cellW - 8);
+    doc.text(nombreCorto, x + 2, yPos + 48);
+
+    col++;
+    if (col >= cols) {
+      col = 0;
+      row++;
+      if (marginY + (row + 1) * cellH > 280) {
+        doc.addPage();
+        row = 0;
+        y = marginY;
+      }
+    }
+  }
+
+  doc.save(`Etiquetas_QR_activos_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+function ActivoForm({ activo, usuario, depositos, tiposActivo, pisos, racks, filas, columnas, onClose }) {
+  const depositosOperables = depositos.filter((d) => puedeOperarDeposito(usuario, d.id));
+  const [form, setForm] = useState(activo || {
+    nombre: '', tipoId: '', cantidad: 1, descripcion: '', estado: 'activo',
+    fechaIngreso: new Date().toISOString().slice(0, 10),
+    pisoId: '', depositoId: depositosOperables[0]?.id || '', rackId: '', filaId: '', columnaId: '',
+    costo: '',
+  });
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  function nombreDe(lista, id) {
+    const it = lista.find((x) => x.id === id);
+    return it ? it.nombre : '';
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    setError('');
+    if (!form.nombre.trim() || !form.depositoId) {
+      setError('Completá al menos el nombre y el depósito.');
+      return;
+    }
+    setGuardando(true);
+    try {
+      const datosPublicos = {
+        nombre: form.nombre.trim(),
+        tipoId: form.tipoId, tipoNombre: nombreDe(tiposActivo, form.tipoId),
+        cantidad: Number(form.cantidad) || 1,
+        descripcion: form.descripcion || '',
+        estado: form.estado,
+        fechaIngreso: form.fechaIngreso,
+        pisoId: form.pisoId, pisoNombre: nombreDe(pisos, form.pisoId),
+        depositoId: form.depositoId, depositoNombre: nombreDe(depositos, form.depositoId),
+        rackId: form.rackId, rackNombre: nombreDe(racks, form.rackId),
+        filaId: form.filaId, filaNombre: nombreDe(filas, form.filaId),
+        columnaId: form.columnaId, columnaNombre: nombreDe(columnas, form.columnaId),
+      };
+
+      let activoId = activo ? activo.id : null;
+      if (activo) {
+        await db.collection('activos').doc(activo.id).update(datosPublicos);
+      } else {
+        const ref = await db.collection('activos').add(datosPublicos);
+        activoId = ref.id;
+      }
+
+      // El costo vive en un documento aparte, de lectura restringida (ver firestore.rules).
+      if (form.costo !== '' && form.costo != null) {
+        await db.collection('activosCosto').doc(activoId).set({ costo: Number(form.costo) }, { merge: true });
+      }
+
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar el activo.');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Modal title={activo ? 'Editar activo' : 'Nuevo activo'} onClose={onClose} wide>
+      <form onSubmit={guardar}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 2 }}>
+            <label>Nombre</label>
+            <input required value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ej: Silla giratoria negra" />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Cantidad</label>
+            <input type="number" min="1" value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            <div className="hint">1 si es un ítem único; más si agrupás varios iguales bajo un mismo registro/QR.</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Tipo</label>
+            <select value={form.tipoId} onChange={(e) => setForm({ ...form, tipoId: e.target.value })}>
+              <option value="">Sin tipo</option>
+              {tiposActivo.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Estado</label>
+            <select value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
+              {ESTADOS_ACTIVO.map((e) => <option key={e} value={e}>{ESTADO_LABELS[e]}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Fecha de ingreso</label>
+            <input type="date" value={form.fechaIngreso} onChange={(e) => setForm({ ...form, fechaIngreso: e.target.value })} />
+          </div>
+        </div>
+
+        <label style={{ fontSize: 12.5, fontWeight: 500, display: 'block', marginBottom: 6 }}>Ubicación</label>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Piso</label>
+            <select value={form.pisoId} onChange={(e) => setForm({ ...form, pisoId: e.target.value })}>
+              <option value="">-</option>
+              {pisos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Depósito</label>
+            <select required value={form.depositoId} onChange={(e) => setForm({ ...form, depositoId: e.target.value })}>
+              <option value="">Seleccioná</option>
+              {depositosOperables.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Rack</label>
+            <select value={form.rackId} onChange={(e) => setForm({ ...form, rackId: e.target.value })}>
+              <option value="">-</option>
+              {racks.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Fila</label>
+            <select value={form.filaId} onChange={(e) => setForm({ ...form, filaId: e.target.value })}>
+              <option value="">-</option>
+              {filas.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Columna</label>
+            <select value={form.columnaId} onChange={(e) => setForm({ ...form, columnaId: e.target.value })}>
+              <option value="">-</option>
+              {columnas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Descripción (opcional)</label>
+          <textarea rows="2" value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} />
+        </div>
+
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label>Costo / valor (opcional)</label>
+          <input type="number" min="0" step="1" value={form.costo} onChange={(e) => setForm({ ...form, costo: e.target.value })} />
+          <div className="hint">No se muestra en la ficha pública del QR — solo lo ve quien esté logueado en el sistema.</div>
+        </div>
+
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function QRActivoModal({ activo, configuracion, onClose }) {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const url = `${urlBaseActivos()}?id=${activo.id}`;
+
+  useEffect(() => {
+    generarQRDataURL(url, 220).then(setQrDataUrl);
+  }, [url]);
+
+  return (
+    <Modal title={`QR — ${activo.nombre}`} onClose={onClose}>
+      <div style={{ textAlign: 'center', marginBottom: 14 }}>
+        {qrDataUrl ? <img src={qrDataUrl} alt="QR" style={{ width: 200, height: 200 }} /> : <div style={{ height: 200 }} />}
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, wordBreak: 'break-all' }}>{url}</div>
+      </div>
+      <div className="modal-actions">
+        <button className="btn btn-outline" onClick={onClose}>Cerrar</button>
+        <button className="btn btn-primary" onClick={() => exportarFichaActivoPDF(activo, configuracion)}>Descargar ficha PDF</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ActivosView({ usuario, activos, depositos, tiposActivo, pisos, racks, filas, columnas, configuracion }) {
+  const [modal, setModal] = useState(null); // null | 'nuevo' | activo
+  const [modalQR, setModalQR] = useState(null);
+  const [seleccionados, setSeleccionados] = useState(new Set());
+  const [filtroTipo, setFiltroTipo] = useState('');
+  const [filtroDeposito, setFiltroDeposito] = useState('');
+  const [filtroEstado, setFiltroEstado] = useState('');
+
+  const puedeEscribir = tienePermiso(usuario.rol, 'gestionarActivos');
+  const puedeEliminar = tienePermiso(usuario.rol, 'eliminarActivos');
+  const depositosVisiblesList = depositosVisibles(usuario, depositos);
+
+  const visibles = activos
+    .filter((a) => puedeVerDeposito(usuario, a.depositoId))
+    .filter((a) => !filtroTipo || a.tipoId === filtroTipo)
+    .filter((a) => !filtroDeposito || a.depositoId === filtroDeposito)
+    .filter((a) => !filtroEstado || a.estado === filtroEstado);
+
+  function toggleSeleccion(id) {
+    setSeleccionados((s) => {
+      const nuevo = new Set(s);
+      if (nuevo.has(id)) nuevo.delete(id); else nuevo.add(id);
+      return nuevo;
+    });
+  }
+
+  async function eliminar(a) {
+    if (!confirm(`¿Eliminar "${a.nombre}"? Esta acción no se puede deshacer.`)) return;
+    await db.collection('activos').doc(a.id).delete();
+  }
+
+  async function imprimirSeleccionados() {
+    const lista = visibles.filter((a) => seleccionados.has(a.id));
+    if (lista.length === 0) return;
+    await exportarPlanchaQRPDF(lista, configuracion);
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1>Activos</h1>
+          <p>Muebles, sillas, cortinas y otros bienes, con ubicación y QR para rastrearlos.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {seleccionados.size > 0 && (
+            <button className="btn btn-outline" onClick={imprimirSeleccionados}>Imprimir QR ({seleccionados.size})</button>
+          )}
+          {puedeEscribir && <button className="btn btn-accent" onClick={() => setModal('nuevo')}>+ Nuevo activo</button>}
+        </div>
+      </div>
+
+      <div className="filters-row">
+        <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+          <option value="">Todos los tipos</option>
+          {tiposActivo.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+        </select>
+        <select value={filtroDeposito} onChange={(e) => setFiltroDeposito(e.target.value)}>
+          <option value="">Todos los depósitos</option>
+          {depositosVisiblesList.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+        </select>
+        <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+          <option value="">Todos los estados</option>
+          {ESTADOS_ACTIVO.map((e) => <option key={e} value={e}>{ESTADO_LABELS[e]}</option>)}
+        </select>
+      </div>
+
+      <div className="table-wrap">
+        {visibles.length === 0 ? <EmptyState text="No hay activos cargados todavía." /> : (
+          <table>
+            <thead>
+              <tr>
+                <th></th><th>Nombre</th><th>Tipo</th><th>Cantidad</th><th>Ubicación</th><th>Estado</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibles.map((a) => (
+                <tr key={a.id}>
+                  <td><input type="checkbox" checked={seleccionados.has(a.id)} onChange={() => toggleSeleccion(a.id)} /></td>
+                  <td>{a.nombre}</td>
+                  <td>{a.tipoNombre || '-'}</td>
+                  <td className="qty">{a.cantidad}</td>
+                  <td style={{ fontSize: 12.5 }}>
+                    {[a.pisoNombre, a.depositoNombre, a.rackNombre, a.filaNombre, a.columnaNombre].filter(Boolean).join(' / ')}
+                  </td>
+                  <td>
+                    <span className={`bin-tag ${a.estado === 'baja' ? 'low' : a.estado === 'mantenimiento' ? 'mid' : ''}`}>{ESTADO_LABELS[a.estado] || a.estado}</span>
+                  </td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModalQR(a)}>QR</button>
+                    {puedeEscribir && <button className="btn btn-outline" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => setModal(a)}>Editar</button>}
+                    {puedeEliminar && <button className="btn btn-danger" style={{ padding: '5px 9px', fontSize: 12 }} onClick={() => eliminar(a)}>Eliminar</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {modal && (
+        <ActivoForm
+          activo={modal === 'nuevo' ? null : modal}
+          usuario={usuario} depositos={depositos}
+          tiposActivo={tiposActivo} pisos={pisos} racks={racks} filas={filas} columnas={columnas}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modalQR && <QRActivoModal activo={modalQR} configuracion={configuracion} onClose={() => setModalQR(null)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Configuración (logo de la empresa)
 // ---------------------------------------------------------------------------
 
@@ -2643,6 +3190,12 @@ function AppShell({ authUser, configuracion }) {
   const [depositos, setDepositos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [sectores, setSectores] = useState([]);
+  const [activos, setActivos] = useState([]);
+  const [tiposActivo, setTiposActivo] = useState([]);
+  const [pisos, setPisos] = useState([]);
+  const [racks, setRacks] = useState([]);
+  const [filas, setFilas] = useState([]);
+  const [columnas, setColumnas] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [stock, setStock] = useState({});
 
@@ -2681,6 +3234,36 @@ function AppShell({ authUser, configuracion }) {
 
   useEffect(() => {
     const unsub = db.collection('proveedores').orderBy('nombre').onSnapshot((snap) => setProveedores(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('activos').orderBy('nombre').onSnapshot((snap) => setActivos(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('tiposActivo').orderBy('nombre').onSnapshot((snap) => setTiposActivo(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('pisos').orderBy('nombre').onSnapshot((snap) => setPisos(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('racks').orderBy('nombre').onSnapshot((snap) => setRacks(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('filas').orderBy('nombre').onSnapshot((snap) => setFilas(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection('columnas').orderBy('nombre').onSnapshot((snap) => setColumnas(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return unsub;
   }, []);
 
@@ -2727,6 +3310,8 @@ function AppShell({ authUser, configuracion }) {
   else if (vista === 'reportes' && tienePermiso(usuario.rol, 'exportarReportes')) contenido = <ReportesView usuario={usuario} insumos={insumos} depositos={depositos} sectores={sectores} stock={stock} configuracion={configuracion} />;
   else if (vista === 'tomaInventario' && tienePermiso(usuario.rol, 'imprimirTomaInventario')) contenido = <TomaInventarioView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} configuracion={configuracion} />;
   else if (vista === 'ajusteInventario' && tienePermiso(usuario.rol, 'ajustarInventario')) contenido = <AjusteInventarioView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
+  else if (vista === 'activos') contenido = <ActivosView usuario={usuario} activos={activos} depositos={depositos} tiposActivo={tiposActivo} pisos={pisos} racks={racks} filas={filas} columnas={columnas} configuracion={configuracion} />;
+  else if (vista === 'catalogosActivos' && tienePermiso(usuario.rol, 'gestionarCatalogosActivos')) contenido = <CatalogosActivosView usuario={usuario} tiposActivo={tiposActivo} pisos={pisos} racks={racks} filas={filas} columnas={columnas} />;
   else if (vista === 'usuarios' && tienePermiso(usuario.rol, 'gestionarUsuarios')) contenido = <UsuariosView depositos={depositos} />;
   else if (vista === 'configuracion' && tienePermiso(usuario.rol, 'gestionarConfiguracion')) contenido = <ConfiguracionView configuracion={configuracion} />;
   else contenido = <DashboardView usuario={usuario} insumos={insumos} depositos={depositos} stock={stock} />;
