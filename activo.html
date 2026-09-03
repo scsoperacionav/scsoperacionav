@@ -79,12 +79,26 @@
     </div>
   </div>
 
-  <!-- Firebase (compat), solo lectura pública de "activos" -->
+  <!-- Firebase (compat), solo lectura pública de "activos".
+       Se carga también Auth aunque esta página no pida login: firebase-config.js
+       (compartido con la app principal) llama a firebase.auth() al inicializar,
+       y sin este script esa llamada rompe silenciosamente toda la página. -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js"></script>
 
   <script>
+    // Red de seguridad: si algo falla ANTES de llegar a cargarFicha() (ej. un
+    // script externo que no carga), que se vea un aviso en vez de quedarse
+    // colgado en "Cargando..." para siempre sin ninguna pista de qué pasó.
+    window.addEventListener('error', (e) => {
+      const contenido = document.getElementById('contenido');
+      if (contenido && contenido.innerHTML.includes('Cargando')) {
+        contenido.innerHTML = `<div class="ficha-estado-msg">Ocurrió un error inesperado al cargar la página.<br><span style="font-family: var(--font-mono); font-size: 11px;">${e.message || ''}</span></div>`;
+      }
+    });
+
     const ESTADO_LABELS = { activo: 'Activo', mantenimiento: 'En mantenimiento', baja: 'De baja' };
 
     function formatearFila(label, valor) {

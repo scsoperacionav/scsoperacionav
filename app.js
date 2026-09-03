@@ -6,7 +6,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Versión de la app: se actualiza a mano en cada tanda de cambios que se sube.
 // Ver CHANGELOG.md para el detalle de qué cambió en cada versión.
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -2165,6 +2165,17 @@ const ESTADO_LABELS = { activo: 'Activo', mantenimiento: 'En mantenimiento', baj
 // Genera la imagen del QR (como PNG en base64) enteramente en el navegador,
 // sin depender de ningún servicio externo. QRCode.js dibuja en un <canvas>
 // oculto y de ahí se extrae la imagen.
+// Devuelve el ancho/alto real de una imagen (dataURL), para poder calcularle
+// un tamaño en el PDF que respete la proporción original y no la estire.
+function obtenerDimensionesImagen(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 1, height: 1 });
+    img.src = dataUrl;
+  });
+}
+
 function generarQRDataURL(texto, tamano) {
   return new Promise((resolve) => {
     const contenedor = document.createElement('div');
@@ -2211,8 +2222,17 @@ async function exportarFichaActivoPDF(activo, configuracion) {
 
   if (activo.fotoBase64) {
     try {
-      doc.addImage(activo.fotoBase64, 'JPEG', 14, y, 180, 55);
-      y += 60;
+      const dim = await obtenerDimensionesImagen(activo.fotoBase64);
+      const maxAncho = 180;
+      const maxAlto = 75;
+      let anchoFinal = maxAncho;
+      let altoFinal = (dim.height / dim.width) * anchoFinal;
+      if (altoFinal > maxAlto) {
+        altoFinal = maxAlto;
+        anchoFinal = (dim.width / dim.height) * altoFinal;
+      }
+      doc.addImage(activo.fotoBase64, 'JPEG', 14, y, anchoFinal, altoFinal);
+      y += altoFinal + 6;
     } catch (e) { /* foto inválida, seguimos sin ella */ }
   }
 

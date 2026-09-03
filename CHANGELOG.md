@@ -3,6 +3,17 @@
 Todas las versiones y qué cambió en cada una. El número de versión visible en
 el pie del menú lateral de la app corresponde a la última entrada de acá.
 
+## [1.5.2] - 2026-09-02
+- **Corrección importante**: la ficha pública del QR (`activo.html`) no
+  cargaba nunca — le faltaba el script de Firebase Authentication, que
+  `firebase-config.js` necesita aunque esa página no pida login. Se agrega
+  el script faltante, más un manejo de errores más robusto para que, si algo
+  similar vuelve a pasar, se vea un aviso claro en vez de quedarse colgado en
+  "Cargando..." sin ninguna pista.
+- **Corrección**: la foto adjunta a un activo salía estirada/deformada en la
+  ficha PDF descargable, porque se forzaba a un rectángulo de tamaño fijo.
+  Ahora se calcula el tamaño respetando la proporción real de la imagen.
+
 ## [1.5.1] - 2026-07-27
 - **Código automático por activo**: cada activo recibe un código secuencial
   (ACT-00001, ACT-00002...) asignado de forma atómica al crearlo, con el
