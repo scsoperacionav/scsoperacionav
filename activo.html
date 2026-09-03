@@ -151,7 +151,7 @@
             ${formatearFila('Fecha de ingreso', a.fechaIngreso)}
             ${formatearFila('Ubicación', ubicacion)}
           </div>
-          ${a.descripcion ? `<div class="ficha-desc">${a.descripcion}</div>` : ''}
+          ${a.descripcion ? `<div class="ficha-desc"><div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color: var(--text-muted); margin-bottom:6px;">Descripción</div>${a.descripcion}</div>` : ''}
         `;
       } catch (err) {
         console.error('Error cargando ficha de activo:', err);
